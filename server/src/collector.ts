@@ -1,3 +1,4 @@
+import os from "node:os";
 import si from "systeminformation";
 import {
   SystemStatsPayload,
@@ -13,6 +14,10 @@ import {
 // Cache para especificações estáticas do hardware (para não recalcular em cada tick)
 let cachedSpecs: SystemSpecsPayload | null = null;
 let cachedCpuInfo: si.Systeminformation.CpuData | null = null;
+let cachedDisks: DiskStats[] = [];
+let lastDiskPoll = 0;
+let cachedGfx: GpuStats[] = [];
+let lastGfxPoll = 0;
 
 export async function getSystemSpecs(): Promise<SystemSpecsPayload> {
   if (cachedSpecs) {
@@ -84,8 +89,15 @@ export async function getSystemSpecs(): Promise<SystemSpecsPayload> {
 }
 
 export async function collectSystemStats(): Promise<SystemStatsPayload> {
-  // Executa leituras em paralelo para obter máximo desempenho e consistência temporal
-  const [load, cpuSpeed, cpuTemp, mem, fs, netStats, netIfaces, gfx, procs, timeData] =
+  const now = Date.now();
+
+  // Atualiza discos a cada 4 segundos (reduz overhead de I/O WMI)
+  const shouldPollDisks = now - lastDiskPoll > 4000 || cachedDisks.length === 0;
+  // Atualiza GPUs a cada 3 segundos
+  const shouldPollGpu = now - lastGfxPoll > 3000 || cachedGfx.length === 0;
+
+  // Leituras essenciais ultra-rápidas a cada tick (CPU, Velocidade, Temp, RAM)
+  const [load, cpuSpeed, cpuTemp, mem, fsResult, gfxResult, timeData] =
     await Promise.all([
       si.currentLoad().catch(() => ({ currentLoad: 0, cpus: [] })),
       si.cpuCurrentSpeed().catch(() => ({ avg: 0 })),
@@ -97,13 +109,39 @@ export async function collectSystemStats(): Promise<SystemStatsPayload> {
         swaptotal: 0,
         swapused: 0,
       })),
-      si.fsSize().catch(() => []),
-      si.networkStats().catch(() => []),
-      si.networkInterfaces().catch(() => []),
-      si.graphics().catch(() => ({ controllers: [] })),
-      si.processes().catch(() => ({ list: [] })),
+      shouldPollDisks ? si.fsSize().catch(() => []) : Promise.resolve(null),
+      shouldPollGpu ? si.graphics().catch(() => ({ controllers: [] })) : Promise.resolve(null),
       si.time(),
     ]);
+
+  if (fsResult !== null) {
+    cachedDisks = fsResult.map((f) => ({
+      fs: f.fs,
+      type: f.type,
+      size: f.size,
+      used: f.used,
+      available: f.available,
+      usePercent: Number(f.use.toFixed(1)),
+      mount: f.mount,
+    }));
+    lastDiskPoll = now;
+  }
+
+  if (gfxResult !== null) {
+    cachedGfx = gfxResult.controllers.map((g) => ({
+      model: g.model || "GPU Genérica",
+      vendor: g.vendor || "Desconhecido",
+      utilizationGpu:
+        g.utilizationGpu !== undefined && g.utilizationGpu !== null
+          ? Number(g.utilizationGpu.toFixed(1))
+          : null,
+      memoryTotal: g.memoryTotal || g.vram || null,
+      memoryUsed: g.memoryUsed || null,
+      memoryFree: g.memoryFree || null,
+      temperatureGpu: g.temperatureGpu || null,
+    }));
+    lastGfxPoll = now;
+  }
 
   const cpuBrand = cachedCpuInfo?.brand || (await si.cpu()).brand;
 
@@ -134,78 +172,25 @@ export async function collectSystemStats(): Promise<SystemStatsPayload> {
     swapPercent: swapUsagePercent,
   };
 
-  const disks: DiskStats[] = fs.map((f) => ({
-    fs: f.fs,
-    type: f.type,
-    size: f.size,
-    used: f.used,
-    available: f.available,
-    usePercent: Number(f.use.toFixed(1)),
-    mount: f.mount,
-  }));
-
-  // Interface primária de rede conectada
-  const activeNetStat =
-    netStats.find((s) => s.rx_sec !== null && s.rx_sec > 0) ||
-    netStats[0] || {
-      iface: "default",
-      rx_sec: 0,
-      tx_sec: 0,
-      rx_bytes: 0,
-      tx_bytes: 0,
-    };
-
-  // Local IPv4
-  const ifaceList = Array.isArray(netIfaces) ? netIfaces : [netIfaces];
-  const activeIface = ifaceList.find(
-    (i) => i.iface === activeNetStat.iface || (i.ip4 && i.ip4 !== "127.0.0.1")
-  );
-
   const network: NetworkStats = {
-    interface: activeNetStat.iface || "Ativa",
-    ip4: activeIface?.ip4 || "127.0.0.1",
-    rxSec: Math.max(0, Math.round(activeNetStat.rx_sec || 0)),
-    txSec: Math.max(0, Math.round(activeNetStat.tx_sec || 0)),
-    rxTotal: activeNetStat.rx_bytes || 0,
-    txTotal: activeNetStat.tx_bytes || 0,
+    interface: "lan",
+    ip4: "127.0.0.1",
+    rxSec: 0,
+    txSec: 0,
+    rxTotal: 0,
+    txTotal: 0,
   };
 
-  const gpus: GpuStats[] = gfx.controllers.map((g) => ({
-    model: g.model || "GPU Genérica",
-    vendor: g.vendor || "Desconhecido",
-    utilizationGpu:
-      g.utilizationGpu !== undefined && g.utilizationGpu !== null
-        ? Number(g.utilizationGpu.toFixed(1))
-        : null,
-    memoryTotal: g.memoryTotal || g.vram || null,
-    memoryUsed: g.memoryUsed || null,
-    memoryFree: g.memoryFree || null,
-    temperatureGpu: g.temperatureGpu || null,
-  }));
-
-  // Top 15 processos reais por CPU + RAM ordenados (ignora System Idle Process)
-  const topProcesses: ProcessItem[] = procs.list
-    .filter((p) => p.name && p.name !== "System Idle Process" && p.cpu >= 0)
-    .sort((a, b) => b.cpu + b.mem - (a.cpu + a.mem))
-    .slice(0, 15)
-    .map((p) => ({
-      pid: p.pid,
-      name: p.name,
-      cpu: Number(p.cpu.toFixed(1)),
-      mem: Number(p.mem.toFixed(1)),
-      user: p.user || "system",
-    }));
-
   return {
-    timestamp: Date.now(),
+    timestamp: now,
     uptime: Math.round(timeData.uptime),
     platform: process.platform,
-    hostname: (await si.osInfo()).hostname,
+    hostname: cachedSpecs?.hostname || os.hostname(),
     cpu: cpuStats,
     memory: memoryStats,
-    disks,
+    disks: cachedDisks,
     network,
-    gpu: gpus,
-    topProcesses,
+    gpu: cachedGfx,
+    topProcesses: [],
   };
 }

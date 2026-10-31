@@ -29,6 +29,7 @@ class MonitorProvider extends ChangeNotifier {
   int _selectedScreenIndex = 0; // 0 = Dev PC, 1 = Ubuntu Server
   bool _autoCycle = false;
   Timer? _autoCycleTimer;
+  Timer? _watchdogTimer;
   String? _clientIpv4;
 
   void Function(int index)? onPageChangeRequested;
@@ -74,6 +75,7 @@ class MonitorProvider extends ChangeNotifier {
     );
 
     _bootstrap();
+    _startWatchdogTimer();
   }
 
   Future<void> _bootstrap() async {
@@ -140,6 +142,56 @@ class MonitorProvider extends ChangeNotifier {
     });
   }
 
+  /// Watchdog ativo a cada 1s: detecta congelamento ou desligamento abrupto do servidor
+  void _startWatchdogTimer() {
+    _watchdogTimer?.cancel();
+    _watchdogTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      _checkServerWatchdog(devPc);
+      _checkServerWatchdog(ubuntuServer);
+    });
+  }
+
+  void _checkServerWatchdog(ServerConnectionState server) {
+    if (server.manualDisconnect) return;
+
+    final now = DateTime.now();
+
+    // Se estiver no estado 'connecting', mas passaram mais de 7s sem resposta, trata como timeout
+    if (server.isConnecting || server.status == ConnectionStatus.connecting) {
+      if (server.connectStartTime != null &&
+          now.difference(server.connectStartTime!).inSeconds >= 7) {
+        if (kDebugMode) {
+          debugPrint('[Watchdog] Servidor ${server.displayName} timeout ao conectar (7s). Marcando erro.');
+        }
+        server.closeWebSocket();
+        server.isConnecting = false;
+        server.status = ConnectionStatus.error;
+        server.errorMessage = 'Tempo limite de conexão esgotado';
+        server.currentStats = null;
+        notifyListeners();
+        _scheduleReconnect(server);
+      }
+      return;
+    }
+
+    // Se marcado como conectado, mas o último dado recebido foi há mais de 5 segundos
+    if (server.isConnected) {
+      if (server.lastMessageTime != null &&
+          now.difference(server.lastMessageTime!).inSeconds >= 5) {
+        if (kDebugMode) {
+          debugPrint('[Watchdog] Servidor ${server.displayName} inativo há 5s. Marcando OFFLINE.');
+        }
+        server.closeWebSocket();
+        server.isConnecting = false;
+        server.status = ConnectionStatus.error;
+        server.errorMessage = 'Sem telemetria do servidor (Timeout)';
+        server.currentStats = null;
+        notifyListeners();
+        _scheduleReconnect(server);
+      }
+    }
+  }
+
   Future<void> connectServer(
     ServerConnectionState server, {
     String? targetHost,
@@ -158,6 +210,8 @@ class MonitorProvider extends ChangeNotifier {
     server.status = ConnectionStatus.connecting;
     server.errorMessage = null;
     server.isConnecting = true;
+    server.connectStartTime = DateTime.now();
+    server.lastMessageTime = null;
     notifyListeners();
 
     // Salva configuração isolada do servidor
@@ -168,12 +222,15 @@ class MonitorProvider extends ChangeNotifier {
       token: server.token,
     );
 
-    // Busca especificações estáticas
-    try {
-      server.specs = await _service.fetchSpecs(server.host, server.port, token: server.token);
-    } catch (_) {}
+    // Busca especificações estáticas em segundo plano para não bloquear a conexão WebSocket
+    _service.fetchSpecs(server.host, server.port, token: server.token).then((specs) {
+      if (specs != null) {
+        server.specs = specs;
+        notifyListeners();
+      }
+    }).catchError((_) {});
 
-    // Conecta ao WebSocket
+    // Conecta ao WebSocket imediatamente
     try {
       server.wsChannel = _service.connectWebSocket(server.host, server.port, token: server.token);
       server.wsSubscription = server.wsChannel!.stream.listen(
@@ -182,14 +239,12 @@ class MonitorProvider extends ChangeNotifier {
         onDone: () => _onWebSocketDone(server),
         cancelOnError: false,
       );
-
-      server.isConnecting = false;
-      server.status = ConnectionStatus.connected;
-      notifyListeners();
+      // Mantém o status como 'connecting' até a chegada do 1º pacote de telemetria em _onMessageReceived
     } catch (e) {
       server.isConnecting = false;
       server.errorMessage = 'Falha ao conectar: $e';
       server.status = ConnectionStatus.error;
+      server.currentStats = null;
       notifyListeners();
       _scheduleReconnect(server);
     }
@@ -202,7 +257,10 @@ class MonitorProvider extends ChangeNotifier {
       final Map<String, dynamic> json = jsonDecode(rawData as String);
       final stats = SystemStatsModel.fromJson(json);
 
+      server.connectStartTime = null;
+      server.lastMessageTime = DateTime.now();
       server.currentStats = stats;
+      server.isConnecting = false;
       server.status = ConnectionStatus.connected;
       server.errorMessage = null;
 
@@ -219,15 +277,28 @@ class MonitorProvider extends ChangeNotifier {
   }
 
   void _onWebSocketError(ServerConnectionState server, dynamic error) {
+    if (kDebugMode) {
+      debugPrint('[MonitorProvider] WebSocket error (${server.id}): $error');
+    }
+    server.closeWebSocket();
+    server.isConnecting = false;
     server.status = ConnectionStatus.error;
+    server.currentStats = null;
     server.errorMessage = 'Conexão interrompida com ${server.displayName}';
     notifyListeners();
     _scheduleReconnect(server);
   }
 
   void _onWebSocketDone(ServerConnectionState server) {
+    if (kDebugMode) {
+      debugPrint('[MonitorProvider] WebSocket encerrado (${server.id})');
+    }
     if (!server.manualDisconnect) {
+      server.closeWebSocket();
+      server.isConnecting = false;
       server.status = ConnectionStatus.reconnecting;
+      server.currentStats = null;
+      server.errorMessage = 'Conexão encerrada pelo servidor';
       notifyListeners();
       _scheduleReconnect(server);
     }
@@ -290,6 +361,7 @@ class MonitorProvider extends ChangeNotifier {
   @override
   void dispose() {
     _autoCycleTimer?.cancel();
+    _watchdogTimer?.cancel();
     devPc.closeWebSocket();
     ubuntuServer.closeWebSocket();
     super.dispose();

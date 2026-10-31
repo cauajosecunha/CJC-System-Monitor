@@ -23,6 +23,8 @@ class ServerConnectionState {
 
   SystemStatsModel? currentStats;
   SystemSpecsModel? specs;
+  DateTime? lastMessageTime;
+  DateTime? connectStartTime;
 
   WebSocketChannel? wsChannel;
   StreamSubscription? wsSubscription;

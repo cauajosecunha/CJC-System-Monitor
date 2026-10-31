@@ -252,7 +252,7 @@ class HomeScreen extends StatelessWidget {
 
           // Conteúdo: se desconectado, mostra placeholder com botão de reconexão
           Expanded(
-            child: stats == null
+            child: (!server.isConnected || stats == null)
                 ? _buildDisconnectedPanel(server, provider, isDevPc)
                 : _buildMachineContent(stats, specs, isDevPc),
           ),
@@ -306,7 +306,7 @@ class HomeScreen extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
             ),
           ),
-          if (server.currentStats != null) ...[
+          if (server.isConnected && server.currentStats != null) ...[
             const SizedBox(width: 4),
             const Icon(Icons.timer_outlined, size: 11, color: AppTheme.textSecondary),
             const SizedBox(width: 2),
