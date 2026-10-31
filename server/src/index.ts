@@ -7,9 +7,14 @@ import { MetricsWebSocketServer } from "./websocket.js";
 import { collectSystemStats, getSystemSpecs } from "./collector.js";
 import { DiscoveryService } from "./discovery.js";
 
-dotenv.config();
+dotenv.config({ override: true });
 
-const PORT = parseInt(process.env.PORT || "4080", 10);
+// Previne colisão caso a porta 4050 seja herdada do ambiente do ProjectUpdater
+let resolvedPort = process.env.PORT;
+if (!resolvedPort || resolvedPort === "4050") {
+  resolvedPort = "4080";
+}
+const PORT = parseInt(resolvedPort, 10);
 const HOST = process.env.HOST || "0.0.0.0";
 const UPDATE_INTERVAL_MS = Math.max(500, parseInt(process.env.UPDATE_INTERVAL_MS || "1000", 10));
 const API_KEY = process.env.API_KEY || "";

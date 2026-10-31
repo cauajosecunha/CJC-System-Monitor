@@ -1,19 +1,29 @@
 package com.cjcdev.systemmonitor
 
+import android.content.Context
 import android.content.pm.ActivityInfo
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.MotionEvent
-import android.view.OrientationEventListener
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodChannel
 
-class MainActivity : FlutterActivity() {
+class MainActivity : FlutterActivity(), SensorEventListener {
 
     private val mainHandler = Handler(Looper.getMainLooper())
-    private var orientationListener: OrientationEventListener? = null
+    private var sensorManager: SensorManager? = null
+    private var orientationSensor: Sensor? = null
+    private var isReverseLandscape = true
+
+    companion object {
+        private const val ORIENTATION_CHANNEL = "com.cjcdev.systemmonitor/orientation"
+    }
 
     private fun neutralizeMouseCursor() {
         flutterEngine?.let { engine ->
@@ -24,33 +34,73 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun setupOrientationListener() {
-        orientationListener = object : OrientationEventListener(this, SensorManager.SENSOR_DELAY_NORMAL) {
-            override fun onOrientationChanged(orientation: Int) {
-                if (orientation == ORIENTATION_UNKNOWN) return
-
-                // 45° a 135° -> Aparelho deitado com o topo para a direita (Reverse Landscape / Seascape)
-                // 225° a 315° -> Aparelho deitado com o topo para a esquerda (Landscape Normal)
-                if (orientation in 60..120) {
-                    if (requestedOrientation != ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE) {
-                        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
-                    }
-                } else if (orientation in 240..300) {
-                    if (requestedOrientation != ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE) {
-                        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-                    }
+    private fun setupOrientationMethodChannel(flutterEngine: FlutterEngine) {
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, ORIENTATION_CHANNEL).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "setReverseLandscape" -> {
+                    val reverse = call.argument<Boolean>("reverse") ?: true
+                    setScreenOrientation(reverse)
+                    result.success(true)
                 }
+                "toggleOrientation" -> {
+                    isReverseLandscape = !isReverseLandscape
+                    setScreenOrientation(isReverseLandscape)
+                    result.success(isReverseLandscape)
+                }
+                "isReverseLandscape" -> {
+                    result.success(isReverseLandscape)
+                }
+                else -> result.notImplemented()
             }
-        }
-        if (orientationListener?.canDetectOrientation() == true) {
-            orientationListener?.enable()
         }
     }
 
+    private fun setScreenOrientation(reverse: Boolean) {
+        isReverseLandscape = reverse
+        val target = if (reverse) {
+            ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
+        } else {
+            ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        }
+        if (requestedOrientation != target) {
+            requestedOrientation = target
+        }
+    }
+
+    private fun setupOrientationSensor() {
+        sensorManager = getSystemService(Context.SENSOR_SERVICE) as? SensorManager
+        // No LG Leon (Android 5.0.1), o sensor primário é o TYPE_ORIENTATION (tipo 3)
+        orientationSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_ORIENTATION)
+            ?: sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+
+        orientationSensor?.let { sensor ->
+            sensorManager?.registerListener(this, sensor, SensorManager.SENSOR_DELAY_UI)
+        }
+    }
+
+    override fun onSensorChanged(event: SensorEvent?) {
+        if (event == null) return
+        if (event.sensor.type == Sensor.TYPE_ORIENTATION) {
+            val roll = event.values[2] // Roll inclinação lateral (-90 a 90)
+            if (roll > 45 && !isReverseLandscape) {
+                setScreenOrientation(true)
+            } else if (roll < -45 && isReverseLandscape) {
+                setScreenOrientation(false)
+            }
+        }
+    }
+
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+
     override fun setRequestedOrientation(requestedOrientation: Int) {
-        // Impede o Flutter de enviar USER_LANDSCAPE (11) ou LANDSCAPE (0) que desativa o sensor no Android 5.0.1
-        if (requestedOrientation == 11 || requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE) {
-            super.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE)
+        // Impede que o Flutter bloqueie a orientação com USER_LANDSCAPE (11)
+        if (requestedOrientation == 11) {
+            val target = if (isReverseLandscape) {
+                ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
+            } else {
+                ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+            }
+            super.setRequestedOrientation(target)
         } else {
             super.setRequestedOrientation(requestedOrientation)
         }
@@ -59,12 +109,14 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         neutralizeMouseCursor()
+        setupOrientationMethodChannel(flutterEngine)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-        setupOrientationListener()
+        // Padrão inicial: Reverse Landscape (desvira os 180° imediatos)
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
+        setupOrientationSensor()
 
         mainHandler.post { neutralizeMouseCursor() }
         mainHandler.postDelayed({ neutralizeMouseCursor() }, 300)
@@ -74,17 +126,19 @@ class MainActivity : FlutterActivity() {
     override fun onResume() {
         super.onResume()
         neutralizeMouseCursor()
-        orientationListener?.enable()
+        orientationSensor?.let {
+            sensorManager?.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
+        }
     }
 
     override fun onPause() {
         super.onPause()
-        orientationListener?.disable()
+        sensorManager?.unregisterListener(this)
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        orientationListener?.disable()
+        sensorManager?.unregisterListener(this)
     }
 
     override fun onPostResume() {

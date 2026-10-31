@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../core/theme/app_theme.dart';
 import '../core/utils/format_utils.dart';
@@ -117,6 +118,36 @@ class HomeScreen extends StatelessWidget {
           ),
 
           const Spacer(),
+
+          // Botão Girar 180° (Inverter Orientação)
+          InkWell(
+            onTap: () async {
+              const platform = MethodChannel('com.cjcdev.systemmonitor/orientation');
+              try {
+                await platform.invokeMethod('toggleOrientation');
+              } catch (_) {}
+            },
+            borderRadius: BorderRadius.circular(4),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+              decoration: BoxDecoration(
+                color: AppTheme.surfaceVariant,
+                borderRadius: BorderRadius.circular(3),
+                border: Border.all(color: AppTheme.border, width: 0.4),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.screen_rotation, color: AppTheme.accentYellow, size: 10),
+                  SizedBox(width: 2),
+                  Text(
+                    '180°',
+                    style: TextStyle(color: AppTheme.accentYellow, fontSize: 7.5, fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 4),
 
           // Botão Configurações
           InkWell(
