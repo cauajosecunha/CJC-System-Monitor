@@ -8,12 +8,14 @@ Sistema integrado de monitoramento e telemetria de hardware e sistema operaciona
 
 ```
 CjcSystemMonitor/
+├── ecosystem.config.cjs    # Orquestração PM2 na raiz (aponta para server/)
 ├── server/                 # Servidor Daemon Local (Node.js 22 + TypeScript)
 │   ├── src/
 │   │   ├── collector.ts    # Coletor de métricas nativas do sistema (systeminformation)
 │   │   ├── websocket.ts    # Servidor WebSocket duplex (ws)
 │   │   ├── types.ts        # Tipagens estritas de telemetria
 │   │   └── index.ts        # Rotas Express REST e bootstrap (Porta TCP/UDP 4080)
+│   ├── ecosystem.config.cjs # Orquestração PM2 interna do servidor
 │   ├── .env.example        # Modelo de variáveis de ambiente
 │   └── package.json
 │
@@ -45,12 +47,28 @@ npm start
 npm run dev
 ```
 
+*Para gerenciamento em background com PM2:*
+```powershell
+pm2 start ecosystem.config.cjs
+pm2 logs cjc-system-monitor-server
+```
+
 ### Endpoints Disponíveis:
 - **`GET http://localhost:4080/api/status`**: Status do serviço e clientes conectados.
 - **`GET http://localhost:4080/api/specs`**: Ficha técnica completa do hardware.
 - **`GET http://localhost:4080/api/stats`**: Snapshot pontual da telemetria.
 - **`WS ws://localhost:4080/ws`**: Canal de streaming contínuo a cada 1000ms.
 - **`UDP 4080`**: Beacon de auto-descoberta IPv4 na rede local.
+
+---
+
+## 🔄 Integração com o ProjectUpdater (Deploy Contínuo)
+
+Comando pós-deploy executado como `root` na VPS de produção (`192.168.3.177`):
+
+```bash
+chown -R cauajosecunha:cauajosecunha . && runuser -u cauajosecunha -- bash -c "export HOME=/home/cauajosecunha PM2_HOME=/home/cauajosecunha/.pm2; cd server && npm install --include=dev && npm run build && (pm2 restart cjc-system-monitor-server --update-env || pm2 start ecosystem.config.cjs) && pm2 save"
+```
 
 ---
 
