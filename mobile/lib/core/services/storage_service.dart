@@ -11,58 +11,79 @@ class StorageService {
     return File('$home/.cjc_system_monitor_config.json');
   }
 
+  Future<Map<String, dynamic>> _readConfig() async {
+    try {
+      final file = _getFile();
+      if (await file.exists()) {
+        final content = await file.readAsString();
+        return jsonDecode(content) as Map<String, dynamic>;
+      }
+    } catch (_) {}
+    return {};
+  }
+
+  Future<void> _writeConfig(Map<String, dynamic> data) async {
+    try {
+      final file = _getFile();
+      await file.writeAsString(jsonEncode(data));
+    } catch (_) {}
+  }
+
+  Future<void> saveServerConfig({
+    required String prefix, // 'dev' ou 'ubuntu'
+    required String host,
+    required int port,
+    String? token,
+  }) async {
+    final current = await _readConfig();
+    current['${prefix}_host'] = host.trim();
+    current['${prefix}_port'] = port;
+    if (token != null && token.trim().isNotEmpty) {
+      current['${prefix}_token'] = token.trim();
+    } else {
+      current.remove('${prefix}_token');
+    }
+    await _writeConfig(current);
+  }
+
+  Future<String?> getServerHost(String prefix, {String? defaultVal}) async {
+    final current = await _readConfig();
+    return (current['${prefix}_host'] as String?) ?? defaultVal;
+  }
+
+  Future<int> getServerPort(String prefix, {int defaultVal = AppConstants.defaultPort}) async {
+    final current = await _readConfig();
+    return (current['${prefix}_port'] as num?)?.toInt() ?? defaultVal;
+  }
+
+  Future<String?> getServerToken(String prefix) async {
+    final current = await _readConfig();
+    return current['${prefix}_token'] as String?;
+  }
+
+  Future<bool> getAutoCycleEnabled() async {
+    final current = await _readConfig();
+    return (current[AppConstants.keyAutoCycle] as bool?) ?? false;
+  }
+
+  Future<void> setAutoCycleEnabled(bool enabled) async {
+    final current = await _readConfig();
+    current[AppConstants.keyAutoCycle] = enabled;
+    await _writeConfig(current);
+  }
+
+  // Compatibilidade com métodos legados
   Future<void> saveConnectionConfig({
     required String host,
     required int port,
     String? token,
   }) async {
-    try {
-      final file = _getFile();
-      final data = {
-        AppConstants.keyHost: host.trim(),
-        AppConstants.keyPort: port,
-        if (token != null && token.trim().isNotEmpty)
-          AppConstants.keyToken: token.trim(),
-      };
-      await file.writeAsString(jsonEncode(data));
-    } catch (_) {}
+    await saveServerConfig(prefix: 'dev', host: host, port: port, token: token);
   }
 
-  Future<String?> getHost() async {
-    try {
-      final file = _getFile();
-      if (await file.exists()) {
-        final content = await file.readAsString();
-        final json = jsonDecode(content);
-        return json[AppConstants.keyHost] as String?;
-      }
-    } catch (_) {}
-    return null;
-  }
-
-  Future<int> getPort() async {
-    try {
-      final file = _getFile();
-      if (await file.exists()) {
-        final content = await file.readAsString();
-        final json = jsonDecode(content);
-        return (json[AppConstants.keyPort] as num?)?.toInt() ?? AppConstants.defaultPort;
-      }
-    } catch (_) {}
-    return AppConstants.defaultPort;
-  }
-
-  Future<String?> getToken() async {
-    try {
-      final file = _getFile();
-      if (await file.exists()) {
-        final content = await file.readAsString();
-        final json = jsonDecode(content);
-        return json[AppConstants.keyToken] as String?;
-      }
-    } catch (_) {}
-    return null;
-  }
+  Future<String?> getHost() async => getServerHost('dev', defaultVal: AppConstants.defaultDevHost);
+  Future<int> getPort() async => getServerPort('dev', defaultVal: AppConstants.defaultDevPort);
+  Future<String?> getToken() async => getServerToken('dev');
 
   Future<void> clearAll() async {
     try {

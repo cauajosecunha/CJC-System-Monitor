@@ -2,11 +2,11 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/foundation.dart';
-import 'package:web_socket_channel/web_socket_channel.dart';
 import '../core/constants/app_constants.dart';
 import '../core/services/discovery_service.dart';
 import '../core/services/monitor_service.dart';
 import '../core/services/storage_service.dart';
+import '../models/server_connection_state.dart';
 import '../models/system_specs_model.dart';
 import '../models/system_stats_model.dart';
 
@@ -23,250 +23,275 @@ class MonitorProvider extends ChangeNotifier {
   final StorageService _storage = StorageService();
   final DiscoveryService _discovery = DiscoveryService();
 
-  ConnectionStatus _status = ConnectionStatus.disconnected;
-  String _host = AppConstants.defaultHost;
-  int _port = AppConstants.defaultPort;
-  String? _token;
-  String? _errorMessage;
+  late final ServerConnectionState devPc;
+  late final ServerConnectionState ubuntuServer;
 
+  int _selectedScreenIndex = 0; // 0 = Dev PC, 1 = Ubuntu Server
+  bool _autoCycle = false;
+  Timer? _autoCycleTimer;
   String? _clientIpv4;
-  bool _isDiscovering = false;
 
-  SystemStatsModel? _currentStats;
-  SystemSpecsModel? _specs;
+  void Function(int index)? onPageChangeRequested;
 
-  WebSocketChannel? _wsChannel;
-  StreamSubscription? _wsSubscription;
-  Timer? _reconnectTimer;
-  bool _manualDisconnect = false;
+  ServerConnectionState get selectedServer =>
+      _selectedScreenIndex == 0 ? devPc : ubuntuServer;
 
-  // Buffers de histórico para gráficos em tempo real (últimos 40 pontos)
-  final List<FlSpot> _cpuHistory = [];
-  final List<FlSpot> _ramHistory = [];
-  final List<FlSpot> _downloadHistory = []; // KB/s
-  final List<FlSpot> _uploadHistory = []; // KB/s
-  double _timeIndex = 0;
-
-  // Getters
-  ConnectionStatus get status => _status;
-  bool get isConnected => _status == ConnectionStatus.connected;
-  bool get isConnecting =>
-      _status == ConnectionStatus.connecting ||
-      _status == ConnectionStatus.reconnecting;
-  bool get isDiscovering => _isDiscovering;
-  String get host => _host;
-  int get port => _port;
-  String? get token => _token;
-  String? get errorMessage => _errorMessage;
+  int get selectedScreenIndex => _selectedScreenIndex;
+  bool get autoCycle => _autoCycle;
   String? get clientIpv4 => _clientIpv4;
-  SystemStatsModel? get currentStats => _currentStats;
-  SystemSpecsModel? get specs => _specs;
 
-  List<FlSpot> get cpuHistory => List.unmodifiable(_cpuHistory);
-  List<FlSpot> get ramHistory => List.unmodifiable(_ramHistory);
-  List<FlSpot> get downloadHistory => List.unmodifiable(_downloadHistory);
-  List<FlSpot> get uploadHistory => List.unmodifiable(_uploadHistory);
+  // Getters delegados para compatibilidade reversa
+  ConnectionStatus get status => selectedServer.status;
+  bool get isConnected => selectedServer.isConnected;
+  bool get isConnecting => selectedServer.isConnecting;
+  bool get isDiscovering => selectedServer.isDiscovering;
+  String get host => selectedServer.host;
+  int get port => selectedServer.port;
+  String? get token => selectedServer.token;
+  String? get errorMessage => selectedServer.errorMessage;
+  SystemStatsModel? get currentStats => selectedServer.currentStats;
+  SystemSpecsModel? get specs => selectedServer.specs;
+  List<FlSpot> get cpuHistory => List.unmodifiable(selectedServer.cpuHistory);
+  List<FlSpot> get ramHistory => List.unmodifiable(selectedServer.ramHistory);
+  List<FlSpot> get downloadHistory => List.unmodifiable(selectedServer.downloadHistory);
+  List<FlSpot> get uploadHistory => List.unmodifiable(selectedServer.uploadHistory);
 
   MonitorProvider() {
-    _initFromStorage();
+    devPc = ServerConnectionState(
+      id: 'dev',
+      defaultName: 'Meu-PC (Dev)',
+      osIcon: 'windows',
+      host: AppConstants.defaultDevHost,
+      port: AppConstants.defaultDevPort,
+    );
+
+    ubuntuServer = ServerConnectionState(
+      id: 'ubuntu',
+      defaultName: 'Ubuntu Server 24.04',
+      osIcon: 'linux',
+      host: AppConstants.defaultUbuntuHost,
+      port: AppConstants.defaultUbuntuPort,
+    );
+
+    _bootstrap();
   }
 
-  Future<void> _initFromStorage() async {
+  Future<void> _bootstrap() async {
     _clientIpv4 = await _discovery.getLocalDeviceIpv4();
 
-    final savedHost = await _storage.getHost();
-    final savedPort = await _storage.getPort();
-    final savedToken = await _storage.getToken();
+    // Carrega configurações persistidas de ambos os servidores
+    final savedDevHost = await _storage.getServerHost('dev', defaultVal: AppConstants.defaultDevHost);
+    final savedDevPort = await _storage.getServerPort('dev', defaultVal: AppConstants.defaultDevPort);
+    final savedDevToken = await _storage.getServerToken('dev');
 
-    if (savedHost != null && savedHost.isNotEmpty) {
-      _host = savedHost;
+    final savedUbuntuHost = await _storage.getServerHost('ubuntu', defaultVal: AppConstants.defaultUbuntuHost);
+    final savedUbuntuPort = await _storage.getServerPort('ubuntu', defaultVal: AppConstants.defaultUbuntuPort);
+    final savedUbuntuToken = await _storage.getServerToken('ubuntu');
+
+    if (savedDevHost != null && savedDevHost.isNotEmpty) devPc.host = savedDevHost;
+    devPc.port = savedDevPort;
+    devPc.token = savedDevToken;
+
+    if (savedUbuntuHost != null && savedUbuntuHost.isNotEmpty) ubuntuServer.host = savedUbuntuHost;
+    ubuntuServer.port = savedUbuntuPort;
+    ubuntuServer.token = savedUbuntuToken;
+
+    _autoCycle = await _storage.getAutoCycleEnabled();
+    if (_autoCycle) {
+      _startAutoCycleTimer();
     }
-    _port = savedPort;
-    _token = savedToken;
+
     notifyListeners();
+
+    // Conecta aos dois servidores em paralelo
+    connectServer(devPc);
+    connectServer(ubuntuServer);
   }
 
-  /// Descobre automaticamente o servidor IPv4 na LAN e conecta
-  Future<bool> autoDiscoverIpv4() async {
-    _isDiscovering = true;
-    _errorMessage = null;
-    notifyListeners();
-
-    try {
-      _clientIpv4 = await _discovery.getLocalDeviceIpv4();
-
-      // 1. Tenta descoberta rápida via UDP Broadcast
-      DiscoveredServer? found = await _discovery.discoverViaUdpBroadcast(port: _port);
-
-      // 2. Se não respondeu por UDP (firewall/roteador), faz varredura na sub-rede IPv4
-      found ??= await _discovery.scanSubnetForServer(port: _port, preferredHost: _host);
-
-      if (found != null) {
-        _host = found.ipv4;
-        _port = found.port;
-        _isDiscovering = false;
-        notifyListeners();
-
-        await connect(_host, _port, targetToken: _token);
-        return true;
-      }
-    } catch (e) {
-      if (kDebugMode) {
-        debugPrint('[MonitorProvider] Erro no auto-discovery IPv4: $e');
-      }
-    } finally {
-      _isDiscovering = false;
+  void setSelectedScreenIndex(int index) {
+    if (_selectedScreenIndex != index && (index == 0 || index == 1)) {
+      _selectedScreenIndex = index;
       notifyListeners();
     }
-
-    return false;
   }
 
-  /// Testa a conectividade HTTP REST sem abrir WebSocket
-  Future<bool> testConnection(String targetHost, int targetPort, {String? targetToken}) async {
-    return await _service.checkHealth(targetHost, targetPort, token: targetToken);
+  void switchToScreen(int index) {
+    setSelectedScreenIndex(index);
+    onPageChangeRequested?.call(index);
   }
 
-  /// Conecta ao servidor e inicia streaming WebSocket
-  Future<void> connect(String targetHost, int targetPort, {String? targetToken}) async {
-    _manualDisconnect = false;
-    _cancelReconnectTimer();
-    _closeWebSocket();
+  void toggleAutoCycle() {
+    _autoCycle = !_autoCycle;
+    _storage.setAutoCycleEnabled(_autoCycle);
+    if (_autoCycle) {
+      _startAutoCycleTimer();
+    } else {
+      _autoCycleTimer?.cancel();
+      _autoCycleTimer = null;
+    }
+    notifyListeners();
+  }
 
-    _host = targetHost.trim();
-    _port = targetPort;
-    _token = targetToken?.trim();
-    _status = ConnectionStatus.connecting;
-    _errorMessage = null;
+  void _startAutoCycleTimer() {
+    _autoCycleTimer?.cancel();
+    _autoCycleTimer = Timer.periodic(AppConstants.autoCycleDefaultDuration, (_) {
+      final nextIndex = (_selectedScreenIndex == 0) ? 1 : 0;
+      switchToScreen(nextIndex);
+    });
+  }
+
+  Future<void> connectServer(
+    ServerConnectionState server, {
+    String? targetHost,
+    int? targetPort,
+    String? targetToken,
+  }) async {
+    server.manualDisconnect = false;
+    server.reconnectTimer?.cancel();
+    server.reconnectTimer = null;
+    server.closeWebSocket();
+
+    if (targetHost != null) server.host = targetHost.trim();
+    if (targetPort != null) server.port = targetPort;
+    if (targetToken != null) server.token = targetToken.trim().isEmpty ? null : targetToken.trim();
+
+    server.status = ConnectionStatus.connecting;
+    server.errorMessage = null;
+    server.isConnecting = true;
     notifyListeners();
 
-    // Salva configuração segura no dispositivo
-    await _storage.saveConnectionConfig(host: _host, port: _port, token: _token);
+    // Salva configuração isolada do servidor
+    await _storage.saveServerConfig(
+      prefix: server.id,
+      host: server.host,
+      port: server.port,
+      token: server.token,
+    );
 
-    // Atualiza o IPv4 local da interface
-    _clientIpv4 = await _discovery.getLocalDeviceIpv4();
-
-    // 1. Carrega especificações estáticas do hardware
-    _specs = await _service.fetchSpecs(_host, _port, token: _token);
-
-    // 2. Estabelece canal WebSocket
+    // Busca especificações estáticas
     try {
-      _wsChannel = _service.connectWebSocket(_host, _port, token: _token);
-      _wsSubscription = _wsChannel!.stream.listen(
-        _onMessageReceived,
-        onError: _onWebSocketError,
-        onDone: _onWebSocketDone,
+      server.specs = await _service.fetchSpecs(server.host, server.port, token: server.token);
+    } catch (_) {}
+
+    // Conecta ao WebSocket
+    try {
+      server.wsChannel = _service.connectWebSocket(server.host, server.port, token: server.token);
+      server.wsSubscription = server.wsChannel!.stream.listen(
+        (rawData) => _onMessageReceived(server, rawData),
+        onError: (err) => _onWebSocketError(server, err),
+        onDone: () => _onWebSocketDone(server),
         cancelOnError: false,
       );
 
-      _status = ConnectionStatus.connected;
+      server.isConnecting = false;
+      server.status = ConnectionStatus.connected;
       notifyListeners();
     } catch (e) {
-      _errorMessage = 'Falha ao estabelecer conexão WebSocket: $e';
-      _status = ConnectionStatus.error;
+      server.isConnecting = false;
+      server.errorMessage = 'Falha ao conectar: $e';
+      server.status = ConnectionStatus.error;
       notifyListeners();
-      _scheduleReconnect();
+      _scheduleReconnect(server);
     }
   }
 
-  void _onMessageReceived(dynamic rawData) {
+  void _onMessageReceived(ServerConnectionState server, dynamic rawData) {
     try {
       if (rawData is String && rawData == 'pong') return;
 
       final Map<String, dynamic> json = jsonDecode(rawData as String);
       final stats = SystemStatsModel.fromJson(json);
 
-      _currentStats = stats;
-      _status = ConnectionStatus.connected;
-      _errorMessage = null;
+      server.currentStats = stats;
+      server.status = ConnectionStatus.connected;
+      server.errorMessage = null;
 
-      // Atualiza buffers deslizantes de histórico para gráficos
-      _timeIndex += 1;
-
-      _addPoint(_cpuHistory, _timeIndex, stats.cpu.usage);
-      _addPoint(_ramHistory, _timeIndex, stats.memory.usagePercent);
-
-      // Converte bytes/sec para KB/sec para legibilidade gráfica
       final dlKb = (stats.network.rxSec / 1024.0);
       final ulKb = (stats.network.txSec / 1024.0);
-      _addPoint(_downloadHistory, _timeIndex, dlKb);
-      _addPoint(_uploadHistory, _timeIndex, ulKb);
+      server.addHistoryPoint(stats.cpu.usage, stats.memory.usagePercent, dlKb, ulKb);
 
       notifyListeners();
     } catch (e) {
       if (kDebugMode) {
-        debugPrint('[MonitorProvider] Erro ao decodificar telemetria: $e');
+        debugPrint('[MonitorProvider] Erro ao decodificar telemetria (${server.id}): $e');
       }
     }
   }
 
-  void _addPoint(List<FlSpot> list, double x, double y) {
-    list.add(FlSpot(x, y));
-    if (list.length > AppConstants.maxHistoryPoints) {
-      list.removeAt(0);
-    }
-  }
-
-  void _onWebSocketError(dynamic error) {
-    if (kDebugMode) {
-      debugPrint('[MonitorProvider] Erro no canal WebSocket: $error');
-    }
-    _status = ConnectionStatus.error;
-    _errorMessage = 'Conexão interrompida';
+  void _onWebSocketError(ServerConnectionState server, dynamic error) {
+    server.status = ConnectionStatus.error;
+    server.errorMessage = 'Conexão interrompida com ${server.displayName}';
     notifyListeners();
-    _scheduleReconnect();
+    _scheduleReconnect(server);
   }
 
-  void _onWebSocketDone() {
-    if (!_manualDisconnect) {
-      _status = ConnectionStatus.reconnecting;
+  void _onWebSocketDone(ServerConnectionState server) {
+    if (!server.manualDisconnect) {
+      server.status = ConnectionStatus.reconnecting;
       notifyListeners();
-      _scheduleReconnect();
+      _scheduleReconnect(server);
     }
   }
 
-  void _scheduleReconnect() {
-    if (_manualDisconnect) return;
-    _cancelReconnectTimer();
-    _reconnectTimer = Timer(const Duration(seconds: 4), () {
-      if (!_manualDisconnect && _status != ConnectionStatus.connected) {
-        connect(_host, _port, targetToken: _token);
+  void _scheduleReconnect(ServerConnectionState server) {
+    if (server.manualDisconnect) return;
+    server.reconnectTimer?.cancel();
+    server.reconnectTimer = Timer(const Duration(seconds: 4), () {
+      if (!server.isConnected && !server.manualDisconnect) {
+        connectServer(server);
       }
     });
   }
 
-  void _cancelReconnectTimer() {
-    _reconnectTimer?.cancel();
-    _reconnectTimer = null;
-  }
-
-  void _closeWebSocket() {
-    _wsSubscription?.cancel();
-    _wsSubscription = null;
-    _wsChannel?.sink.close();
-    _wsChannel = null;
-  }
-
-  /// Desconecta intencionalmente e limpa os estados em memória
-  void disconnect() {
-    _manualDisconnect = true;
-    _cancelReconnectTimer();
-    _closeWebSocket();
-    _status = ConnectionStatus.disconnected;
-    _currentStats = null;
-    _cpuHistory.clear();
-    _ramHistory.clear();
-    _downloadHistory.clear();
-    _uploadHistory.clear();
-    _timeIndex = 0;
+  Future<void> disconnectServer(ServerConnectionState server) async {
+    server.manualDisconnect = true;
+    server.closeWebSocket();
+    server.status = ConnectionStatus.disconnected;
+    server.currentStats = null;
     notifyListeners();
+  }
+
+  Future<bool> autoDiscoverServer(ServerConnectionState server) async {
+    server.isDiscovering = true;
+    notifyListeners();
+
+    try {
+      DiscoveredServer? found = await _discovery.discoverViaUdpBroadcast(port: server.port);
+      found ??= await _discovery.scanSubnetForServer(port: server.port, preferredHost: server.host);
+
+      if (found != null) {
+        server.host = found.ipv4;
+        server.port = found.port;
+        server.isDiscovering = false;
+        notifyListeners();
+        await connectServer(server);
+        return true;
+      }
+    } catch (_) {}
+
+    server.isDiscovering = false;
+    notifyListeners();
+    return false;
+  }
+
+  // Compatibilidade legada
+  Future<bool> testConnection(String targetHost, int targetPort, {String? targetToken}) async {
+    return await _service.checkHealth(targetHost, targetPort, token: targetToken);
+  }
+
+  Future<void> connect(String targetHost, int targetPort, {String? targetToken}) async {
+    await connectServer(selectedServer, targetHost: targetHost, targetPort: targetPort, targetToken: targetToken);
+  }
+
+  Future<bool> autoDiscoverIpv4() async {
+    return await autoDiscoverServer(selectedServer);
   }
 
   @override
   void dispose() {
-    disconnect();
-    _service.dispose();
-    _discovery.dispose();
+    _autoCycleTimer?.cancel();
+    devPc.closeWebSocket();
+    ubuntuServer.closeWebSocket();
     super.dispose();
   }
 }
