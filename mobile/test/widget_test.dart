@@ -6,7 +6,9 @@ void main() {
     await tester.pumpWidget(const CjcSystemMonitorApp());
     await tester.pump();
 
-    // Na inicialização sem stats, exibe o estado de desconectado / descoberta
-    expect(find.textContaining('IPv4'), findsWidgets);
+    // Na inicialização, exibe o HUD global com as 2 máquinas
+    expect(find.textContaining('CJC MONITOR'), findsWidgets);
+    expect(find.textContaining('Meu-PC'), findsWidgets);
+    expect(find.textContaining('Ubuntu'), findsWidgets);
   });
 }

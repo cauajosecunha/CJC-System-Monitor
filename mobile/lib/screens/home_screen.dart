@@ -1,4 +1,3 @@
-import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../core/theme/app_theme.dart';
@@ -9,40 +8,8 @@ import '../models/system_stats_model.dart';
 import '../providers/monitor_provider.dart';
 import 'connect_screen.dart';
 
-class HomeScreen extends StatefulWidget {
+class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
-
-  @override
-  State<HomeScreen> createState() => _HomeScreenState();
-}
-
-class _HomeScreenState extends State<HomeScreen> {
-  late final PageController _pageController;
-
-  @override
-  void initState() {
-    super.initState();
-    _pageController = PageController(initialPage: 0);
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final provider = context.read<MonitorProvider>();
-      provider.onPageChangeRequested = (index) {
-        if (_pageController.hasClients) {
-          _pageController.animateToPage(
-            index,
-            duration: const Duration(milliseconds: 320),
-            curve: Curves.easeInOut,
-          );
-        }
-      };
-    });
-  }
-
-  @override
-  void dispose() {
-    _pageController.dispose();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -51,28 +18,46 @@ class _HomeScreenState extends State<HomeScreen> {
       body: SafeArea(
         child: Consumer<MonitorProvider>(
           builder: (context, provider, child) {
-            final activeServer = provider.selectedServer;
-
             return Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 5.0, vertical: 3.0),
+              padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 3.0),
               child: Column(
                 children: [
-                  // 1. BARRA HUD SUPERIOR COM SELETOR DE MÁQUINAS (Altura fixa ~28dp)
-                  _buildTopHudBar(provider, activeServer),
+                  // 1. BARRA HUD SUPERIOR GLOBAL (Altura ~24dp)
+                  _buildGlobalHudBar(context, provider),
                   const SizedBox(height: 3),
 
-                  // 2. CORPO DIVIDIDO EM 2 TELAS DE MONITORAMENTO (PAGEVIEW)
+                  // 2. CORPO: AS DUAS TELAS EXIBIDAS JUNTAS LADO A LADO
                   Expanded(
-                    child: PageView(
-                      controller: _pageController,
-                      onPageChanged: (index) {
-                        provider.setSelectedScreenIndex(index);
-                      },
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        // TELA 1: PC DESENVOLVIMENTO (WINDOWS)
-                        _buildCockpitScreen(provider.devPc, provider),
-                        // TELA 2: SERVIDOR PRODUÇÃO (UBUNTU SERVER 24.04 LTS)
-                        _buildCockpitScreen(provider.ubuntuServer, provider),
+                        // LADO ESQUERDO: PC DE DESENVOLVIMENTO (MEU-PC / WINDOWS)
+                        Expanded(
+                          child: _buildMachinePanel(
+                            context: context,
+                            server: provider.devPc,
+                            provider: provider,
+                            isDevPc: true,
+                          ),
+                        ),
+                        const SizedBox(width: 3),
+
+                        // DIVISOR VERTICAL NEON
+                        Container(
+                          width: 1.0,
+                          color: AppTheme.border,
+                        ),
+                        const SizedBox(width: 3),
+
+                        // LADO DIREITO: SERVIDOR UBUNTU (UBUNTU SERVER 24.04 LTS)
+                        Expanded(
+                          child: _buildMachinePanel(
+                            context: context,
+                            server: provider.ubuntuServer,
+                            provider: provider,
+                            isDevPc: false,
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -85,967 +70,727 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // --- 1. TOPO: BARRA HUD COMPACTA COM ABAS DOS COMPUTADORES ---
-  Widget _buildTopHudBar(MonitorProvider provider, ServerConnectionState activeServer) {
+  // --- 1. BARRA HUD SUPERIOR GLOBAL ---
+  Widget _buildGlobalHudBar(BuildContext context, MonitorProvider provider) {
     return Container(
-      height: 28,
+      height: 24,
       padding: const EdgeInsets.symmetric(horizontal: 6),
       decoration: BoxDecoration(
         color: AppTheme.surface,
-        borderRadius: BorderRadius.circular(6),
+        borderRadius: BorderRadius.circular(5),
         border: Border.all(color: AppTheme.border, width: 0.6),
       ),
       child: Row(
         children: [
-          const Icon(Icons.monitor_heart, color: AppTheme.primaryBlue, size: 13),
+          const Icon(Icons.monitor_heart, color: AppTheme.primaryBlue, size: 12),
           const SizedBox(width: 4),
           const Text(
             'CJC MONITOR',
             style: TextStyle(
               color: AppTheme.textPrimary,
-              fontSize: 9,
+              fontSize: 8.5,
               fontWeight: FontWeight.w900,
-              letterSpacing: 0.7,
+              letterSpacing: 0.8,
             ),
           ),
           const SizedBox(width: 8),
 
-          // SELETOR / ABAS DOS 2 COMPUTADORES
-          _buildMachineTab(
-            provider: provider,
-            server: provider.devPc,
-            index: 0,
+          // Status Resumido Meu-PC
+          _buildQuickStatusBadge(
             icon: Icons.desktop_windows,
-            label: '💻 Meu-PC (Win)',
-            activeColor: AppTheme.primaryBlue,
+            name: 'Meu-PC',
+            server: provider.devPc,
+            color: AppTheme.primaryBlue,
           ),
-          const SizedBox(width: 4),
-          _buildMachineTab(
-            provider: provider,
-            server: provider.ubuntuServer,
-            index: 1,
+          const SizedBox(width: 6),
+
+          // Divisor
+          Container(width: 1, height: 12, color: AppTheme.border),
+          const SizedBox(width: 6),
+
+          // Status Resumido Ubuntu Server
+          _buildQuickStatusBadge(
             icon: Icons.dns_outlined,
-            label: '🐧 Ubuntu Server',
-            activeColor: AppTheme.accentGreen,
+            name: 'Ubuntu',
+            server: provider.ubuntuServer,
+            color: AppTheme.accentGreen,
           ),
 
           const Spacer(),
 
-          // Uptime do computador ativo
-          if (activeServer.currentStats != null) ...[
-            Row(
-              children: [
-                const Icon(Icons.timer_outlined, size: 10, color: AppTheme.textSecondary),
-                const SizedBox(width: 3),
-                Text(
-                  'Uptime: ${FormatUtils.formatUptime(activeServer.currentStats!.uptime)}',
-                  style: const TextStyle(color: AppTheme.textSecondary, fontSize: 8),
-                ),
-              ],
-            ),
-            const SizedBox(width: 6),
-          ],
-
-          // Botão de Alternância Automática (Auto-Cycle)
-          InkWell(
-            onTap: () => provider.toggleAutoCycle(),
-            borderRadius: BorderRadius.circular(4),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-              decoration: BoxDecoration(
-                color: provider.autoCycle ? AppTheme.accentYellow.withValues(alpha: 0.2) : Colors.transparent,
-                borderRadius: BorderRadius.circular(4),
-                border: Border.all(
-                  color: provider.autoCycle ? AppTheme.accentYellow : Colors.transparent,
-                  width: 0.6,
-                ),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.autorenew,
-                    size: 11,
-                    color: provider.autoCycle ? AppTheme.accentYellow : AppTheme.textSecondary,
-                  ),
-                  if (provider.autoCycle) ...[
-                    const SizedBox(width: 2),
-                    const Text('12s', style: TextStyle(color: AppTheme.accentYellow, fontSize: 7, fontWeight: FontWeight.bold)),
-                  ],
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(width: 4),
-
           // Botão Configurações
           InkWell(
             onTap: () {
-              Navigator.push(
-                context,
+              Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => const ConnectScreen()),
               );
             },
-            child: const Icon(Icons.settings_outlined, size: 13, color: AppTheme.textSecondary),
+            borderRadius: BorderRadius.circular(4),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+              decoration: BoxDecoration(
+                color: AppTheme.surfaceVariant,
+                borderRadius: BorderRadius.circular(3),
+                border: Border.all(color: AppTheme.border, width: 0.4),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.settings, color: AppTheme.textSecondary, size: 10),
+                  SizedBox(width: 2),
+                  Text(
+                    'CONFIG',
+                    style: TextStyle(color: AppTheme.textSecondary, fontSize: 7.5, fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildMachineTab({
-    required MonitorProvider provider,
-    required ServerConnectionState server,
-    required int index,
+  Widget _buildQuickStatusBadge({
     required IconData icon,
-    required String label,
-    required Color activeColor,
+    required String name,
+    required ServerConnectionState server,
+    required Color color,
   }) {
-    final isSelected = provider.selectedScreenIndex == index;
-
-    Color statusColor;
+    Color dotColor;
+    String statusText;
     if (server.isConnected) {
-      statusColor = AppTheme.accentGreen;
+      dotColor = AppTheme.accentGreen;
+      statusText = 'ON';
     } else if (server.isConnecting || server.isDiscovering) {
-      statusColor = AppTheme.accentYellow;
+      dotColor = AppTheme.accentYellow;
+      statusText = 'CONN...';
     } else {
-      statusColor = AppTheme.accentRed;
+      dotColor = AppTheme.accentRed;
+      statusText = 'OFF';
     }
 
-    return InkWell(
-      onTap: () => provider.switchToScreen(index),
-      borderRadius: BorderRadius.circular(4),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-        decoration: BoxDecoration(
-          color: isSelected ? activeColor.withValues(alpha: 0.2) : AppTheme.surfaceVariant.withValues(alpha: 0.5),
-          borderRadius: BorderRadius.circular(4),
-          border: Border.all(
-            color: isSelected ? activeColor : AppTheme.border,
-            width: isSelected ? 1.0 : 0.4,
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 10, color: color),
+        const SizedBox(width: 3),
+        Text(
+          name,
+          style: const TextStyle(color: AppTheme.textPrimary, fontSize: 8, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(width: 3),
+        Container(
+          width: 5,
+          height: 5,
+          decoration: BoxDecoration(shape: BoxShape.circle, color: dotColor),
+        ),
+        const SizedBox(width: 2),
+        Text(
+          statusText,
+          style: TextStyle(color: dotColor, fontSize: 7, fontWeight: FontWeight.bold),
+        ),
+      ],
+    );
+  }
+
+  // --- 2. PAINEL DEDICADO DE CADA MÁQUINA ---
+  Widget _buildMachinePanel({
+    required BuildContext context,
+    required ServerConnectionState server,
+    required MonitorProvider provider,
+    required bool isDevPc,
+  }) {
+    final stats = server.currentStats;
+    final specs = server.specs;
+
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: AppTheme.surface.withValues(alpha: 0.7),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(
+          color: isDevPc ? AppTheme.primaryBlue.withValues(alpha: 0.3) : AppTheme.accentGreen.withValues(alpha: 0.3),
+          width: 0.8,
+        ),
+      ),
+      child: Column(
+        children: [
+          // Header da Máquina (Nome, IP, Uptime)
+          _buildMachineHeader(server, isDevPc),
+          const SizedBox(height: 3),
+
+          // Conteúdo: se desconectado, mostra placeholder com botão de reconexão
+          Expanded(
+            child: stats == null
+                ? _buildDisconnectedPanel(server, provider, isDevPc)
+                : _buildMachineContent(stats, specs, isDevPc),
           ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 5,
-              height: 5,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: statusColor,
-              ),
-            ),
-            const SizedBox(width: 4),
-            Text(
-              label,
-              style: TextStyle(
-                color: isSelected ? AppTheme.textPrimary : AppTheme.textSecondary,
-                fontSize: 8.5,
-                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-              ),
-            ),
-            const SizedBox(width: 3),
-            Text(
-              server.host,
-              style: TextStyle(
-                color: isSelected ? activeColor : AppTheme.textSecondary,
-                fontSize: 7.5,
-                fontFamily: 'monospace',
-              ),
-            ),
-          ],
-        ),
+        ],
       ),
     );
   }
 
-  // --- 2. TELA DE COCKPIT COMPLETO (3 COLUNAS) ---
-  Widget _buildCockpitScreen(ServerConnectionState server, MonitorProvider provider) {
-    final stats = server.currentStats;
-    final specs = server.specs;
+  // Header interno de cada máquina
+  Widget _buildMachineHeader(ServerConnectionState server, bool isDevPc) {
+    final color = isDevPc ? AppTheme.primaryBlue : AppTheme.accentGreen;
+    final icon = isDevPc ? Icons.desktop_windows : Icons.dns_outlined;
+    final label = isDevPc ? '💻 MEU-PC (WINDOWS)' : '🐧 UBUNTU SERVER';
 
-    if (stats == null) {
-      return _buildDisconnectedState(server, provider);
+    Color dotColor;
+    if (server.isConnected) {
+      dotColor = AppTheme.accentGreen;
+    } else if (server.isConnecting || server.isDiscovering) {
+      dotColor = AppTheme.accentYellow;
+    } else {
+      dotColor = AppTheme.accentRed;
     }
 
+    return Container(
+      height: 20,
+      padding: const EdgeInsets.symmetric(horizontal: 5),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: color.withValues(alpha: 0.3), width: 0.5),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 11, color: color),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(color: color, fontSize: 8.5, fontWeight: FontWeight.bold, letterSpacing: 0.5),
+          ),
+          const SizedBox(width: 4),
+          Container(
+            width: 5,
+            height: 5,
+            decoration: BoxDecoration(shape: BoxShape.circle, color: dotColor),
+          ),
+          const SizedBox(width: 4),
+          Text(
+            server.host,
+            style: const TextStyle(color: AppTheme.textSecondary, fontSize: 7.5, fontFamily: 'monospace'),
+          ),
+          const Spacer(),
+          if (server.currentStats != null) ...[
+            const Icon(Icons.timer_outlined, size: 9, color: AppTheme.textSecondary),
+            const SizedBox(width: 2),
+            Text(
+              FormatUtils.formatUptime(server.currentStats!.uptime),
+              style: const TextStyle(color: AppTheme.textSecondary, fontSize: 7.5),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  // Painel de estado desconectado
+  Widget _buildDisconnectedPanel(ServerConnectionState server, MonitorProvider provider, bool isDevPc) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(Icons.cloud_off_rounded, size: 28, color: AppTheme.accentRed),
+          const SizedBox(height: 4),
+          Text(
+            server.isConnecting ? 'CONECTANDO...' : 'DESCONECTADO',
+            style: const TextStyle(color: AppTheme.accentRed, fontSize: 9.5, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            'ws://${server.host}:${server.port}/ws',
+            style: const TextStyle(color: AppTheme.textSecondary, fontSize: 7.5, fontFamily: 'monospace'),
+          ),
+          const SizedBox(height: 6),
+          ElevatedButton(
+            onPressed: () => provider.connectServer(server),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.surfaceVariant,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              minimumSize: const Size(60, 22),
+            ),
+            child: const Text('RECONECTAR', style: TextStyle(fontSize: 8, color: AppTheme.textPrimary)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Conteúdo ativo de cada máquina (2 Sub-colunas compactas)
+  Widget _buildMachineContent(SystemStatsModel stats, SystemSpecsModel? specs, bool isDevPc) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // COLUNA 1: CPU & MATRIZ DE NÚCLEOS
+        // SUB-COLUNA ESQUERDA: CPU, CORES, GPU E REDE
         Expanded(
-          flex: 32,
-          child: _buildColumnCpuAndCores(stats),
-        ),
-        const SizedBox(width: 4),
-
-        // COLUNA 2: TELEMETRIA CONTÍNUA (GRÁFICO), RAM E DISCOS
-        Expanded(
-          flex: 38,
-          child: _buildColumnTelemetryAndMemory(stats, server),
-        ),
-        const SizedBox(width: 4),
-
-        // COLUNA 3: GPU, REDE, TOP PROCESSOS E FICHA DO SISTEMA
-        Expanded(
-          flex: 30,
-          child: _buildColumnGpuNetworkAndProcesses(stats, specs),
-        ),
-      ],
-    );
-  }
-
-  // --- COLUNA 1: CPU E MATRIZ DE 12 NÚCLEOS ---
-  Widget _buildColumnCpuAndCores(SystemStatsModel stats) {
-    final cpuColor = AppTheme.getLoadColor(stats.cpu.usage);
-
-    return Column(
-      children: [
-        // Card Principal da CPU
-        Container(
-          padding: const EdgeInsets.all(7),
-          decoration: BoxDecoration(
-            color: AppTheme.surface,
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(color: AppTheme.border, width: 0.6),
-          ),
+          flex: 50,
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Row(
-                    children: [
-                      Icon(Icons.memory, color: AppTheme.primaryBlue, size: 13),
-                      SizedBox(width: 4),
-                      Text(
-                        'CPU',
-                        style: TextStyle(
-                          color: AppTheme.textSecondary,
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                  Text(
-                    '${stats.cpu.speed} GHz${stats.cpu.temp != null ? ' • ${stats.cpu.temp}°C' : ''}',
-                    style: const TextStyle(color: AppTheme.textSecondary, fontSize: 9),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 2),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    '${stats.cpu.usage.toStringAsFixed(1)}%',
-                    style: TextStyle(
-                      color: cpuColor,
-                      fontSize: 20,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                  Text(
-                    stats.cpu.brand.replaceAll('Processor', '').trim(),
-                    style: const TextStyle(
-                      color: AppTheme.textSecondary,
-                      fontSize: 8,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 4),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(3),
-                child: LinearProgressIndicator(
-                  value: (stats.cpu.usage / 100.0).clamp(0.0, 1.0),
-                  backgroundColor: AppTheme.surfaceVariant,
-                  valueColor: AlwaysStoppedAnimation<Color>(cpuColor),
-                  minHeight: 4,
-                ),
-              ),
-            ],
-          ),
-        ),
-
-        const SizedBox(height: 4),
-
-        // Matriz Compacta de Núcleos
-        Expanded(
-          child: Container(
-            padding: const EdgeInsets.all(6),
-            decoration: BoxDecoration(
-              color: AppTheme.surface,
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: AppTheme.border, width: 0.6),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text(
-                      'NÚCLEOS DA CPU',
-                      style: TextStyle(
-                        color: AppTheme.textSecondary,
-                        fontSize: 9,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    Text(
-                      '${stats.cpu.cores.length} THREADS',
-                      style: const TextStyle(
-                        color: AppTheme.primaryBlue,
-                        fontSize: 8,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                Expanded(
-                  child: GridView.builder(
-                    physics: const NeverScrollableScrollPhysics(),
-                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 3,
-                      crossAxisSpacing: 4,
-                      mainAxisSpacing: 3,
-                      childAspectRatio: 2.3,
-                    ),
-                    itemCount: stats.cpu.cores.length,
-                    itemBuilder: (context, index) {
-                      final core = stats.cpu.cores[index];
-                      final load = core;
-                      final color = AppTheme.getLoadColor(load);
-
-                      return Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: AppTheme.surfaceVariant.withValues(alpha: 0.7),
-                          borderRadius: BorderRadius.circular(4),
-                          border: Border.all(color: AppTheme.border, width: 0.4),
-                        ),
-                        child: Row(
-                          children: [
-                            RotatedBox(
-                              quarterTurns: 3,
-                              child: SizedBox(
-                                width: 14,
-                                height: 3,
-                                child: ClipRRect(
-                                  borderRadius: BorderRadius.circular(1.5),
-                                  child: LinearProgressIndicator(
-                                    value: (load / 100.0).clamp(0.0, 1.0),
-                                    backgroundColor: Colors.transparent,
-                                    valueColor: AlwaysStoppedAnimation<Color>(color),
-                                  ),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 4),
-                            Expanded(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    'C${index + 1}',
-                                    style: const TextStyle(
-                                      color: AppTheme.textSecondary,
-                                      fontSize: 7.5,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                  Text(
-                                    '${load.toStringAsFixed(0)}%',
-                                    style: TextStyle(
-                                      color: color,
-                                      fontSize: 8,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  // --- COLUNA 2: TELEMETRIA CONTÍNUA (GRÁFICO), RAM E DISCOS ---
-  Widget _buildColumnTelemetryAndMemory(SystemStatsModel stats, ServerConnectionState server) {
-    final ramColor = AppTheme.getLoadColor(stats.memory.usagePercent);
-
-    return Column(
-      children: [
-        // Gráfico de Linha ao Vivo (CPU + RAM)
-        Expanded(
-          flex: 52,
-          child: Container(
-            padding: const EdgeInsets.fromLTRB(8, 6, 8, 4),
-            decoration: BoxDecoration(
-              color: AppTheme.surface,
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: AppTheme.border, width: 0.6),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text(
-                      'HISTÓRICO AO VIVO',
-                      style: TextStyle(
-                        color: AppTheme.textSecondary,
-                        fontSize: 9,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    Row(
-                      children: [
-                        _buildLegendItem('CPU', AppTheme.primaryBlue),
-                        const SizedBox(width: 8),
-                        _buildLegendItem('RAM', AppTheme.accentGreen),
-                      ],
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                Expanded(
-                  child: server.cpuHistory.length < 2
-                      ? const Center(
-                          child: Text(
-                            'Aguardando telemetria...',
-                            style: TextStyle(color: AppTheme.textSecondary, fontSize: 9),
-                          ),
-                        )
-                      : LineChart(
-                          LineChartData(
-                            gridData: FlGridData(
-                              show: true,
-                              drawVerticalLine: false,
-                              horizontalInterval: 25,
-                              getDrawingHorizontalLine: (_) => FlLine(
-                                color: AppTheme.border.withValues(alpha: 0.3),
-                                strokeWidth: 0.6,
-                              ),
-                            ),
-                            titlesData: const FlTitlesData(show: false),
-                            borderData: FlBorderData(show: false),
-                            minY: 0,
-                            maxY: 100,
-                            lineTouchData: const LineTouchData(enabled: false),
-                            lineBarsData: [
-                              // Linha CPU
-                              LineChartBarData(
-                                spots: server.cpuHistory,
-                                isCurved: true,
-                                curveSmoothness: 0.25,
-                                color: AppTheme.primaryBlue,
-                                barWidth: 1.8,
-                                isStrokeCapRound: true,
-                                dotData: const FlDotData(show: false),
-                              ),
-                              // Linha RAM
-                              LineChartBarData(
-                                spots: server.ramHistory,
-                                isCurved: true,
-                                curveSmoothness: 0.25,
-                                color: AppTheme.accentGreen,
-                                barWidth: 1.8,
-                                isStrokeCapRound: true,
-                                dotData: const FlDotData(show: false),
-                              ),
-                            ],
-                          ),
-                          duration: Duration.zero,
-                        ),
-                ),
-              ],
-            ),
-          ),
-        ),
-
-        const SizedBox(height: 4),
-
-        // Card Compacto da Memória RAM
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-          decoration: BoxDecoration(
-            color: AppTheme.surface,
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(color: AppTheme.border, width: 0.6),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Row(
-                    children: [
-                      Icon(Icons.reorder, color: AppTheme.accentGreen, size: 12),
-                      SizedBox(width: 4),
-                      Text(
-                        'MEMÓRIA RAM',
-                        style: TextStyle(
-                          color: AppTheme.textSecondary,
-                          fontSize: 9,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                  Text(
-                    '${FormatUtils.formatBytes(stats.memory.used)} / ${FormatUtils.formatBytes(stats.memory.total)}',
-                    style: const TextStyle(color: AppTheme.textSecondary, fontSize: 8),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 2),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    '${stats.memory.usagePercent.toStringAsFixed(1)}%',
-                    style: TextStyle(
-                      color: ramColor,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                  Text(
-                    'Livre: ${FormatUtils.formatBytes(stats.memory.free)} • Swap: ${stats.memory.swapPercent.toStringAsFixed(0)}%',
-                    style: const TextStyle(color: AppTheme.textSecondary, fontSize: 8),
-                  ),
-                ],
+              // Bloco CPU + Cores
+              Expanded(
+                flex: 56,
+                child: _buildCpuAndCoresBlock(stats, specs),
               ),
               const SizedBox(height: 3),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(2),
-                child: LinearProgressIndicator(
-                  value: (stats.memory.usagePercent / 100.0).clamp(0.0, 1.0),
-                  backgroundColor: AppTheme.surfaceVariant,
-                  valueColor: AlwaysStoppedAnimation<Color>(ramColor),
-                  minHeight: 3.5,
-                ),
+
+              // Bloco GPU + Rede
+              Expanded(
+                flex: 44,
+                child: _buildGpuAndNetworkBlock(stats, specs),
               ),
             ],
           ),
         ),
+        const SizedBox(width: 3),
 
-        const SizedBox(height: 4),
-
-        // Unidades de Armazenamento / Discos
+        // SUB-COLUNA DIREITA: RAM, ARMAZENAMENTO E TOP PROCESSOS
         Expanded(
-          flex: 48,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-            decoration: BoxDecoration(
-              color: AppTheme.surface,
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: AppTheme.border, width: 0.6),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text(
-                      'ARMAZENAMENTO',
-                      style: TextStyle(
-                        color: AppTheme.textSecondary,
-                        fontSize: 9,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    Text(
-                      '${stats.disks.length} UNIDADES',
-                      style: const TextStyle(
-                        color: AppTheme.accentPurple,
-                        fontSize: 8,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 3),
-                Expanded(
-                  child: ListView.separated(
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: stats.disks.length.clamp(0, 3),
-                    separatorBuilder: (context, index) => const SizedBox(height: 3),
-                    itemBuilder: (context, index) {
-                      final disk = stats.disks[index];
-                      final diskColor = AppTheme.getLoadColor(disk.usePercent);
+          flex: 50,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Bloco RAM + Armazenamento
+              Expanded(
+                flex: 52,
+                child: _buildRamAndStorageBlock(stats),
+              ),
+              const SizedBox(height: 3),
 
-                      return Row(
-                        children: [
-                          SizedBox(
-                            width: 58,
-                            child: Text(
-                              '${disk.fs} (${disk.type})',
-                              style: const TextStyle(color: AppTheme.textPrimary, fontSize: 8, fontWeight: FontWeight.bold),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          const SizedBox(width: 4),
-                          Expanded(
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(1.5),
-                              child: LinearProgressIndicator(
-                                value: (disk.usePercent / 100.0).clamp(0.0, 1.0),
-                                backgroundColor: AppTheme.surfaceVariant,
-                                valueColor: AlwaysStoppedAnimation<Color>(diskColor),
-                                minHeight: 3.5,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            '${FormatUtils.formatBytes(disk.used)} / ${FormatUtils.formatBytes(disk.size)} (${disk.usePercent.toStringAsFixed(0)}%)',
-                            style: TextStyle(color: diskColor, fontSize: 7.5, fontWeight: FontWeight.bold),
-                          ),
-                        ],
-                      );
-                    },
-                  ),
-                ),
-              ],
-            ),
+              // Bloco Top Processos + Ficha SO
+              Expanded(
+                flex: 48,
+                child: _buildProcessesAndOsBlock(stats, specs),
+              ),
+            ],
           ),
         ),
       ],
     );
   }
 
-  // --- COLUNA 3: GPU, REDE, TOP PROCESSOS E FICHA DO SISTEMA ---
-  Widget _buildColumnGpuNetworkAndProcesses(SystemStatsModel stats, SystemSpecsModel? specs) {
-    final primaryGpu = stats.gpu.isNotEmpty ? stats.gpu.first : null;
-    final dlKb = (stats.network.rxSec / 1024.0);
-    final ulKb = (stats.network.txSec / 1024.0);
-    final topProcs = stats.topProcesses.take(4).toList();
+  // --- SUB-COLUNA ESQUERDA: BLOCO CPU & CORES ---
+  Widget _buildCpuAndCoresBlock(SystemStatsModel stats, SystemSpecsModel? specs) {
+    final cpuColor = AppTheme.getLoadColor(stats.cpu.usage);
 
-    return Column(
-      children: [
-        // Quadrante Rápido: GPU & REDE (Lado a lado)
-        Row(
-          children: [
-            // GPU
-            Expanded(
-              child: Container(
-                padding: const EdgeInsets.all(5),
-                decoration: BoxDecoration(
-                  color: AppTheme.surface,
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: AppTheme.border, width: 0.6),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Row(
-                      children: [
-                        Icon(Icons.videogame_asset_outlined, color: AppTheme.accentPurple, size: 11),
-                        SizedBox(width: 3),
-                        Text(
-                          'GPU',
-                          style: TextStyle(color: AppTheme.textSecondary, fontSize: 8, fontWeight: FontWeight.bold),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      primaryGpu != null ? primaryGpu.model.replaceAll('Series', '').trim() : 'Integrada / Sem GPU',
-                      style: const TextStyle(color: AppTheme.textPrimary, fontSize: 8.5, fontWeight: FontWeight.bold),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    Text(
-                      primaryGpu?.memoryTotal != null
-                          ? '${FormatUtils.formatBytes(primaryGpu!.memoryTotal! * 1024 * 1024)} VRAM'
-                          : (primaryGpu != null ? primaryGpu.vendor : 'Headless'),
-                      style: const TextStyle(color: AppTheme.accentPurple, fontSize: 7.5),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-                ),
+    return Container(
+      padding: const EdgeInsets.all(5),
+      decoration: BoxDecoration(
+        color: AppTheme.surface,
+        borderRadius: BorderRadius.circular(5),
+        border: Border.all(color: AppTheme.border, width: 0.6),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Linha de Título CPU + Valor Gigante
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              const Row(
+                children: [
+                  Icon(Icons.memory, color: AppTheme.primaryBlue, size: 11),
+                  SizedBox(width: 2),
+                  Text(
+                    'CPU',
+                    style: TextStyle(color: AppTheme.textSecondary, fontSize: 8, fontWeight: FontWeight.bold),
+                  ),
+                ],
               ),
-            ),
-            const SizedBox(width: 4),
-
-            // REDE
-            Expanded(
-              child: Container(
-                padding: const EdgeInsets.all(5),
-                decoration: BoxDecoration(
-                  color: AppTheme.surface,
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: AppTheme.border, width: 0.6),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Icon(Icons.swap_vert, color: AppTheme.accentYellow, size: 11),
-                        const SizedBox(width: 3),
-                        Text(
-                          stats.network.interfaceName.toUpperCase(),
-                          style: const TextStyle(color: AppTheme.textSecondary, fontSize: 8, fontWeight: FontWeight.bold),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      '↓ ${dlKb >= 1024 ? (dlKb / 1024.0).toStringAsFixed(1) : dlKb.toStringAsFixed(0)} ${dlKb >= 1024 ? "MB/s" : "KB/s"}',
-                      style: const TextStyle(color: AppTheme.accentYellow, fontSize: 8.5, fontWeight: FontWeight.bold),
-                    ),
-                    Text(
-                      '↑ ${ulKb >= 1024 ? (ulKb / 1024.0).toStringAsFixed(1) : ulKb.toStringAsFixed(0)} ${ulKb >= 1024 ? "MB/s" : "KB/s"}',
-                      style: const TextStyle(color: AppTheme.textSecondary, fontSize: 7.5),
-                    ),
-                  ],
-                ),
+              Text(
+                '${stats.cpu.usage.toStringAsFixed(1)}%',
+                style: TextStyle(color: cpuColor, fontSize: 13, fontWeight: FontWeight.w900),
               ),
-            ),
-          ],
-        ),
+            ],
+          ),
 
-        const SizedBox(height: 4),
-
-        // Top Processos
-        Expanded(
-          child: Container(
-            padding: const EdgeInsets.all(6),
-            decoration: BoxDecoration(
-              color: AppTheme.surface,
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: AppTheme.border, width: 0.6),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text(
-                      'TOP PROCESSOS',
-                      style: TextStyle(color: AppTheme.textSecondary, fontSize: 8.5, fontWeight: FontWeight.bold),
-                    ),
-                    Text(
-                      '${stats.topProcesses.length} ATIVOS',
-                      style: const TextStyle(color: AppTheme.accentGreen, fontSize: 7.5, fontWeight: FontWeight.bold),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 3),
-                Expanded(
-                  child: ListView.separated(
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: topProcs.length,
-                    separatorBuilder: (context, index) => const SizedBox(height: 2),
-                    itemBuilder: (context, index) {
-                      final proc = topProcs[index];
-                      return Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              proc.name,
-                              style: const TextStyle(color: AppTheme.textPrimary, fontSize: 8, fontWeight: FontWeight.w600),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
-                            decoration: BoxDecoration(
-                              color: AppTheme.surfaceVariant,
-                              borderRadius: BorderRadius.circular(2),
-                            ),
-                            child: Text(
-                              'C ${proc.cpu.toStringAsFixed(0)}%',
-                              style: TextStyle(
-                                color: AppTheme.getLoadColor(proc.cpu),
-                                fontSize: 7,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 3),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
-                            decoration: BoxDecoration(
-                              color: AppTheme.surfaceVariant,
-                              borderRadius: BorderRadius.circular(2),
-                            ),
-                            child: Text(
-                              'R ${proc.mem.toStringAsFixed(0)}%',
-                              style: TextStyle(
-                                color: AppTheme.getLoadColor(proc.mem),
-                                fontSize: 7,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                        ],
-                      );
-                    },
+          // Clock e Temperatura
+          Row(
+            children: [
+              Text(
+                '${stats.cpu.speed.toStringAsFixed(2)} GHz',
+                style: const TextStyle(color: AppTheme.textPrimary, fontSize: 7.5, fontWeight: FontWeight.w600),
+              ),
+              if (stats.cpu.temp != null && stats.cpu.temp! > 0) ...[
+                Text(
+                  ' • ${stats.cpu.temp!.toStringAsFixed(0)}°C',
+                  style: TextStyle(
+                    color: stats.cpu.temp! > 75 ? AppTheme.accentRed : AppTheme.accentYellow,
+                    fontSize: 7.5,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
               ],
+            ],
+          ),
+
+          // Barra de progresso CPU global
+          const SizedBox(height: 2),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(2),
+            child: LinearProgressIndicator(
+              value: (stats.cpu.usage / 100.0).clamp(0.0, 1.0),
+              backgroundColor: AppTheme.surfaceVariant,
+              valueColor: AlwaysStoppedAnimation<Color>(cpuColor),
+              minHeight: 2.5,
             ),
           ),
-        ),
 
-        const SizedBox(height: 3),
+          const SizedBox(height: 3),
 
-        // Barra de Ficha Técnica / SO
-        Container(
-          height: 18,
-          padding: const EdgeInsets.symmetric(horizontal: 6),
-          decoration: BoxDecoration(
-            color: AppTheme.surfaceVariant.withValues(alpha: 0.5),
-            borderRadius: BorderRadius.circular(4),
-            border: Border.all(color: AppTheme.border, width: 0.4),
+          // Mini Matriz de Cores (Adaptável: 12 threads detalhadas ou 56 threads em mapa de calor)
+          Expanded(
+            child: _buildCoresMatrix(stats.cpu.cores),
           ),
-          child: Row(
+        ],
+      ),
+    );
+  }
+
+  // Mini-matriz adaptativa de núcleos
+  Widget _buildCoresMatrix(List<double> cores) {
+    if (cores.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    // Se até 16 núcleos (ex: Ryzen 5 3600 com 12 threads), mostra grid legível
+    if (cores.length <= 16) {
+      return LayoutBuilder(
+        builder: (context, constraints) {
+          return GridView.builder(
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: cores.length,
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 4,
+              mainAxisSpacing: 1.5,
+              crossAxisSpacing: 1.5,
+              childAspectRatio: 2.2,
+            ),
+            itemBuilder: (context, index) {
+              final load = cores[index];
+              final color = AppTheme.getLoadColor(load);
+              return Container(
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(2),
+                  border: Border.all(color: color.withValues(alpha: 0.35), width: 0.4),
+                ),
+                alignment: Alignment.center,
+                child: Text(
+                  '${load.toStringAsFixed(0)}%',
+                  style: TextStyle(color: color, fontSize: 6.5, fontWeight: FontWeight.bold),
+                ),
+              );
+            },
+          );
+        },
+      );
+    }
+
+    // Se mais de 16 núcleos (ex: Xeon com 56 threads), mostra mapa de calor de micro-blocos
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '${cores.length} THREADS ATIVAS',
+          style: const TextStyle(color: AppTheme.accentGreen, fontSize: 6.5, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 1.5),
+        Expanded(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              return GridView.builder(
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: cores.length,
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 14,
+                  mainAxisSpacing: 1.2,
+                  crossAxisSpacing: 1.2,
+                  childAspectRatio: 1.0,
+                ),
+                itemBuilder: (context, index) {
+                  final load = cores[index];
+                  final color = AppTheme.getLoadColor(load);
+                  return Container(
+                    decoration: BoxDecoration(
+                      color: color,
+                      borderRadius: BorderRadius.circular(1),
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  // --- SUB-COLUNA ESQUERDA: BLOCO GPU & REDE ---
+  Widget _buildGpuAndNetworkBlock(SystemStatsModel stats, SystemSpecsModel? specs) {
+    final dlKb = stats.network.rxSec / 1024.0;
+    final ulKb = stats.network.txSec / 1024.0;
+
+    final gpuName = (stats.gpu.isNotEmpty && stats.gpu.first.model.isNotEmpty)
+        ? stats.gpu.first.model
+        : (specs != null && specs.gpus.isNotEmpty ? specs.gpus.first.model : 'GPU Não Detectada');
+
+    final vramTotal = (stats.gpu.isNotEmpty && stats.gpu.first.memoryTotal != null)
+        ? stats.gpu.first.memoryTotal
+        : (specs != null && specs.gpus.isNotEmpty ? specs.gpus.first.vram : null);
+
+    final vramUsed = stats.gpu.isNotEmpty ? stats.gpu.first.memoryUsed : null;
+
+    return Container(
+      padding: const EdgeInsets.all(5),
+      decoration: BoxDecoration(
+        color: AppTheme.surface,
+        borderRadius: BorderRadius.circular(5),
+        border: Border.all(color: AppTheme.border, width: 0.6),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          // Linha GPU
+          Row(
             children: [
-              const Icon(Icons.info_outline, size: 9, color: AppTheme.textSecondary),
-              const SizedBox(width: 4),
+              const Icon(Icons.videogame_asset_outlined, color: AppTheme.accentPurple, size: 10),
+              const SizedBox(width: 3),
               Expanded(
                 child: Text(
-                  specs != null
-                      ? '${specs.distro} (${specs.arch}) • ${stats.hostname}'
-                      : '${stats.platform.toUpperCase()} • ${stats.hostname}',
-                  style: const TextStyle(color: AppTheme.textSecondary, fontSize: 7.5, fontWeight: FontWeight.w500),
+                  gpuName,
+                  style: const TextStyle(color: AppTheme.textPrimary, fontSize: 7.5, fontWeight: FontWeight.bold),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
+              if (vramTotal != null && vramTotal > 0)
+                Text(
+                  vramUsed != null
+                      ? '${(vramUsed / 1024.0).toStringAsFixed(1)}G'
+                      : '${(vramTotal / 1024.0).toStringAsFixed(0)}G VRAM',
+                  style: const TextStyle(color: AppTheme.accentPurple, fontSize: 7, fontWeight: FontWeight.bold),
+                ),
             ],
           ),
-        ),
-      ],
+
+          // Divisor sutil
+          Container(height: 0.4, color: AppTheme.border),
+
+          // Linha Rede
+          Row(
+            children: [
+              const Icon(Icons.swap_vert, color: AppTheme.accentYellow, size: 10),
+              const SizedBox(width: 2),
+              Expanded(
+                child: Text(
+                  stats.network.interfaceName.toUpperCase(),
+                  style: const TextStyle(color: AppTheme.textSecondary, fontSize: 7, fontWeight: FontWeight.bold),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              Text(
+                '↓ ${dlKb >= 1024 ? (dlKb / 1024.0).toStringAsFixed(1) : dlKb.toStringAsFixed(0)} ${dlKb >= 1024 ? "MB/s" : "KB/s"}',
+                style: const TextStyle(color: AppTheme.accentYellow, fontSize: 7, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(width: 3),
+              Text(
+                '↑ ${ulKb >= 1024 ? (ulKb / 1024.0).toStringAsFixed(1) : ulKb.toStringAsFixed(0)}',
+                style: const TextStyle(color: AppTheme.textSecondary, fontSize: 6.5),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
-  Widget _buildLegendItem(String label, Color color) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 5,
-          height: 5,
-          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-        ),
-        const SizedBox(width: 3),
-        Text(
-          label,
-          style: const TextStyle(color: AppTheme.textSecondary, fontSize: 7.5, fontWeight: FontWeight.bold),
-        ),
-      ],
+  // --- SUB-COLUNA DIREITA: BLOCO RAM & ARMAZENAMENTO ---
+  Widget _buildRamAndStorageBlock(SystemStatsModel stats) {
+    final ramColor = AppTheme.getLoadColor(stats.memory.usagePercent);
+
+    return Container(
+      padding: const EdgeInsets.all(5),
+      decoration: BoxDecoration(
+        color: AppTheme.surface,
+        borderRadius: BorderRadius.circular(5),
+        border: Border.all(color: AppTheme.border, width: 0.6),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // RAM Header
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              const Row(
+                children: [
+                  Icon(Icons.storage, color: AppTheme.accentGreen, size: 10),
+                  SizedBox(width: 2),
+                  Text('RAM', style: TextStyle(color: AppTheme.textSecondary, fontSize: 7.5, fontWeight: FontWeight.bold)),
+                ],
+              ),
+              Text(
+                '${stats.memory.usagePercent.toStringAsFixed(1)}%',
+                style: TextStyle(color: ramColor, fontSize: 11, fontWeight: FontWeight.w900),
+              ),
+            ],
+          ),
+
+          // RAM Valores & Barra
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                '${FormatUtils.formatBytes(stats.memory.used)} / ${FormatUtils.formatBytes(stats.memory.total)}',
+                style: const TextStyle(color: AppTheme.textPrimary, fontSize: 7, fontWeight: FontWeight.w600),
+              ),
+              if (stats.memory.swapTotal > 0)
+                Text(
+                  'Swp ${stats.memory.swapPercent.toStringAsFixed(0)}%',
+                  style: const TextStyle(color: AppTheme.textSecondary, fontSize: 6.5),
+                ),
+            ],
+          ),
+          const SizedBox(height: 1.5),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(2),
+            child: LinearProgressIndicator(
+              value: (stats.memory.usagePercent / 100.0).clamp(0.0, 1.0),
+              backgroundColor: AppTheme.surfaceVariant,
+              valueColor: AlwaysStoppedAnimation<Color>(ramColor),
+              minHeight: 2.5,
+            ),
+          ),
+
+          const SizedBox(height: 3),
+          Container(height: 0.4, color: AppTheme.border),
+          const SizedBox(height: 2),
+
+          // Armazenamento / Discos (exibe até 2 discos principais)
+          Expanded(
+            child: ListView.separated(
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: stats.disks.length.clamp(0, 2),
+              separatorBuilder: (context, index) => const SizedBox(height: 1.5),
+              itemBuilder: (context, index) {
+                final disk = stats.disks[index];
+                final diskColor = AppTheme.getLoadColor(disk.usePercent);
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          disk.mount,
+                          style: const TextStyle(color: AppTheme.textPrimary, fontSize: 7, fontWeight: FontWeight.bold),
+                        ),
+                        Text(
+                          '${disk.usePercent.toStringAsFixed(0)}% (${FormatUtils.formatBytes(disk.used)})',
+                          style: TextStyle(color: diskColor, fontSize: 6.5, fontWeight: FontWeight.w600),
+                        ),
+                      ],
+                    ),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(1.5),
+                      child: LinearProgressIndicator(
+                        value: (disk.usePercent / 100.0).clamp(0.0, 1.0),
+                        backgroundColor: AppTheme.surfaceVariant,
+                        valueColor: AlwaysStoppedAnimation<Color>(diskColor),
+                        minHeight: 2.0,
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ],
+      ),
     );
   }
 
-  Widget _buildDisconnectedState(ServerConnectionState server, MonitorProvider provider) {
-    return Center(
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: AppTheme.surface,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: AppTheme.border, width: 0.6),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              server.isConnecting || server.isDiscovering ? Icons.radar : Icons.cloud_off_outlined,
-              size: 32,
-              color: server.isConnecting || server.isDiscovering ? AppTheme.accentYellow : AppTheme.textSecondary,
+  // --- SUB-COLUNA DIREITA: BLOCO TOP PROCESSOS & FICHA SO ---
+  Widget _buildProcessesAndOsBlock(SystemStatsModel stats, SystemSpecsModel? specs) {
+    final topProcs = stats.topProcesses.take(3).toList();
+
+    return Container(
+      padding: const EdgeInsets.all(5),
+      decoration: BoxDecoration(
+        color: AppTheme.surface,
+        borderRadius: BorderRadius.circular(5),
+        border: Border.all(color: AppTheme.border, width: 0.6),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header Top Processos
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'TOP PROCESSOS',
+                style: TextStyle(color: AppTheme.textSecondary, fontSize: 7, fontWeight: FontWeight.bold),
+              ),
+              Text(
+                '${stats.topProcesses.length} ATIVOS',
+                style: const TextStyle(color: AppTheme.accentGreen, fontSize: 6.5, fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+          const SizedBox(height: 2),
+
+          // Lista de Processos
+          Expanded(
+            child: ListView.separated(
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: topProcs.length,
+              separatorBuilder: (context, index) => const SizedBox(height: 1.5),
+              itemBuilder: (context, index) {
+                final proc = topProcs[index];
+                return Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        proc.name,
+                        style: const TextStyle(color: AppTheme.textPrimary, fontSize: 7, fontWeight: FontWeight.w600),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    Text(
+                      'C:${proc.cpu.toStringAsFixed(0)}% R:${proc.mem.toStringAsFixed(0)}%',
+                      style: const TextStyle(color: AppTheme.textSecondary, fontSize: 6.5, fontFamily: 'monospace'),
+                    ),
+                  ],
+                );
+              },
             ),
-            const SizedBox(height: 6),
-            Text(
-              server.defaultName,
-              style: const TextStyle(color: AppTheme.textPrimary, fontSize: 13, fontWeight: FontWeight.bold),
+          ),
+
+          // Mini Rodapé com Ficha de SO
+          Container(
+            padding: const EdgeInsets.only(top: 1.5),
+            decoration: const BoxDecoration(
+              border: Border(top: BorderSide(color: AppTheme.border, width: 0.4)),
             ),
-            const SizedBox(height: 2),
-            Text(
-              server.isDiscovering
-                  ? 'Varrendo rede IPv4 local...'
-                  : (server.isConnecting ? 'Conectando ao daemon...' : 'Painel Desconectado'),
-              style: const TextStyle(color: AppTheme.textSecondary, fontSize: 10),
+            child: Text(
+              specs != null ? '${specs.distro} (${specs.arch})' : 'Sistema Ativo',
+              style: const TextStyle(color: AppTheme.textSecondary, fontSize: 6.5),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
-            const SizedBox(height: 2),
-            Text(
-              'Aguardando telemetria em ${server.host}:${server.port}...',
-              style: const TextStyle(color: AppTheme.textSecondary, fontSize: 9, fontFamily: 'monospace'),
-            ),
-            const SizedBox(height: 10),
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                OutlinedButton.icon(
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppTheme.accentGreen,
-                    side: const BorderSide(color: AppTheme.accentGreen),
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                  ),
-                  onPressed: server.isDiscovering ? null : () => provider.autoDiscoverServer(server),
-                  icon: const Icon(Icons.radar, size: 12),
-                  label: const Text('Auto-Descobrir IPv4', style: TextStyle(fontSize: 9)),
-                ),
-                const SizedBox(width: 8),
-                ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTheme.primaryBlue,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                  ),
-                  onPressed: () => provider.connectServer(server),
-                  icon: const Icon(Icons.refresh, size: 12),
-                  label: const Text('Reconectar', style: TextStyle(fontSize: 9)),
-                ),
-                const SizedBox(width: 8),
-                TextButton.icon(
-                  style: TextButton.styleFrom(
-                    foregroundColor: AppTheme.textSecondary,
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                  ),
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (_) => const ConnectScreen()),
-                    );
-                  },
-                  icon: const Icon(Icons.settings, size: 12),
-                  label: const Text('Ajustar IP', style: TextStyle(fontSize: 9)),
-                ),
-              ],
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

@@ -82,3 +82,4 @@ class ServerConnectionState {
     wsChannel = null;
   }
 }
+
