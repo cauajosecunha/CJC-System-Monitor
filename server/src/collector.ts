@@ -1,5 +1,7 @@
 import { spawn, ChildProcess } from "node:child_process";
+import fs from "node:fs";
 import os from "node:os";
+import path from "node:path";
 import si from "systeminformation";
 import {
   SystemStatsPayload,
@@ -20,7 +22,70 @@ let lastDiskPoll = 0;
 let cachedGfx: GpuStats[] = [];
 let lastGfxPoll = 0;
 let cachedWindowsVramUsedMb: number | null = null;
+let cachedWindowsCpuTemp: number | null = null;
 let typeperfProcess: ChildProcess | null = null;
+let cpuTempProcess: ChildProcess | null = null;
+
+function startWindowsCpuTempMonitor(): void {
+  if (process.platform !== "win32") return;
+  if (cpuTempProcess) {
+    try {
+      cpuTempProcess.kill();
+    } catch (_) {}
+    cpuTempProcess = null;
+  }
+
+  const candidatePaths = [
+    path.resolve(__dirname, "../bin/hwinfo_sensor_reader.exe"),
+    path.resolve(__dirname, "../../bin/hwinfo_sensor_reader.exe"),
+    path.resolve(process.cwd(), "bin/hwinfo_sensor_reader.exe"),
+    path.resolve(process.cwd(), "server/bin/hwinfo_sensor_reader.exe"),
+  ];
+  const exePath = candidatePaths.find((p) => fs.existsSync(p));
+  if (!exePath) return;
+
+  try {
+    const child = spawn(exePath, ["--loop", "2000"], {
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+
+    cpuTempProcess = child;
+
+    let buf = "";
+    child.stdout?.on("data", (chunk: Buffer) => {
+      buf += chunk.toString();
+      const lines = buf.split(/\r?\n/);
+      buf = lines.pop() || "";
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith("TEMP:")) {
+          const valStr = trimmed.substring(5).trim();
+          if (valStr === "NULL") {
+            cachedWindowsCpuTemp = null;
+          } else {
+            const parsed = parseFloat(valStr);
+            if (!isNaN(parsed) && parsed > 0 && parsed < 130) {
+              cachedWindowsCpuTemp = Number(parsed.toFixed(1));
+            }
+          }
+        }
+      }
+    });
+
+    child.on("error", () => {
+      cpuTempProcess = null;
+      setTimeout(startWindowsCpuTempMonitor, 10000);
+    });
+
+    child.on("exit", () => {
+      cpuTempProcess = null;
+      setTimeout(startWindowsCpuTempMonitor, 5000);
+    });
+  } catch (_) {
+    cpuTempProcess = null;
+  }
+}
 
 function startWindowsVramMonitor(): void {
   if (process.platform !== "win32") return;
@@ -77,9 +142,10 @@ function startWindowsVramMonitor(): void {
   }
 }
 
-// Inicia monitoramento contínuo invisível em segundo plano (processo persistente único, sem piscar janelas)
+// Inicia monitoramento contínuo invisível em segundo plano (processos persistentes únicos, sem piscar janelas)
 if (process.platform === "win32") {
   startWindowsVramMonitor();
+  startWindowsCpuTempMonitor();
 
   const cleanup = () => {
     if (typeperfProcess) {
@@ -87,6 +153,12 @@ if (process.platform === "win32") {
         typeperfProcess.kill();
       } catch (_) {}
       typeperfProcess = null;
+    }
+    if (cpuTempProcess) {
+      try {
+        cpuTempProcess.kill();
+      } catch (_) {}
+      cpuTempProcess = null;
     }
   };
   process.on("exit", cleanup);
@@ -227,9 +299,16 @@ export async function collectSystemStats(): Promise<SystemStatsPayload> {
 
   const cpuBrand = cachedCpuInfo?.brand || (await si.cpu()).brand;
 
+  let tempVal: number | null = null;
+  if (cpuTemp.main !== null && !isNaN(cpuTemp.main) && cpuTemp.main > 0) {
+    tempVal = Number(cpuTemp.main.toFixed(1));
+  } else if (process.platform === "win32" && cachedWindowsCpuTemp !== null) {
+    tempVal = cachedWindowsCpuTemp;
+  }
+
   const cpuStats: CpuStats = {
     usage: Number(load.currentLoad.toFixed(1)),
-    temp: cpuTemp.main !== null && !isNaN(cpuTemp.main) ? Number(cpuTemp.main.toFixed(1)) : null,
+    temp: tempVal,
     speed: Number(cpuSpeed.avg.toFixed(2)),
     cores: load.cpus.map((c) => Number(c.load.toFixed(1))),
     brand: cpuBrand,
