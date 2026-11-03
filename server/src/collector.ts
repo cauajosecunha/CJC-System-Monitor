@@ -1,3 +1,4 @@
+import { exec } from "node:child_process";
 import os from "node:os";
 import si from "systeminformation";
 import {
@@ -18,6 +19,37 @@ let cachedDisks: DiskStats[] = [];
 let lastDiskPoll = 0;
 let cachedGfx: GpuStats[] = [];
 let lastGfxPoll = 0;
+let cachedWindowsVramUsedMb: number | null = null;
+let isPollingWindowsVram = false;
+
+function pollWindowsVram(): void {
+  if (process.platform !== "win32" || isPollingWindowsVram) return;
+  isPollingWindowsVram = true;
+  exec('typeperf "\\GPU Local Adapter Memory(*)\\Local Usage" -sc 1', { timeout: 3500 }, (err, stdout) => {
+    isPollingWindowsVram = false;
+    if (err || !stdout) return;
+    try {
+      const lines = stdout.trim().split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0);
+      if (lines.length >= 2) {
+        const values = lines[1]
+          .split(",")
+          .slice(1)
+          .map((v) => parseFloat(v.replace(/"/g, "")))
+          .filter((v) => !isNaN(v));
+        if (values.length > 0) {
+          const maxUsedBytes = Math.max(...values);
+          cachedWindowsVramUsedMb = Math.round(maxUsedBytes / (1024 * 1024));
+        }
+      }
+    } catch (_) {}
+  });
+}
+
+// Inicia polling assíncrono em segundo plano para o Windows (não bloqueia o loop principal)
+if (process.platform === "win32") {
+  pollWindowsVram();
+  setInterval(pollWindowsVram, 4000);
+}
 
 export async function getSystemSpecs(): Promise<SystemSpecsPayload> {
   if (cachedSpecs) {
@@ -128,18 +160,25 @@ export async function collectSystemStats(): Promise<SystemStatsPayload> {
   }
 
   if (gfxResult !== null) {
-    cachedGfx = gfxResult.controllers.map((g) => ({
-      model: g.model || "GPU Genérica",
-      vendor: g.vendor || "Desconhecido",
-      utilizationGpu:
-        g.utilizationGpu !== undefined && g.utilizationGpu !== null
-          ? Number(g.utilizationGpu.toFixed(1))
-          : null,
-      memoryTotal: g.memoryTotal || g.vram || null,
-      memoryUsed: g.memoryUsed || null,
-      memoryFree: g.memoryFree || null,
-      temperatureGpu: g.temperatureGpu || null,
-    }));
+    cachedGfx = gfxResult.controllers.map((g) => {
+      const memTotal = g.memoryTotal || g.vram || null;
+      let memUsed = g.memoryUsed || null;
+      if (process.platform === "win32" && cachedWindowsVramUsedMb !== null) {
+        memUsed = cachedWindowsVramUsedMb;
+      }
+      return {
+        model: g.model || "GPU Genérica",
+        vendor: g.vendor || "Desconhecido",
+        utilizationGpu:
+          g.utilizationGpu !== undefined && g.utilizationGpu !== null
+            ? Number(g.utilizationGpu.toFixed(1))
+            : null,
+        memoryTotal: memTotal,
+        memoryUsed: memUsed,
+        memoryFree: g.memoryFree || (memTotal && memUsed ? Math.max(0, memTotal - memUsed) : null),
+        temperatureGpu: g.temperatureGpu || null,
+      };
+    });
     lastGfxPoll = now;
   }
 

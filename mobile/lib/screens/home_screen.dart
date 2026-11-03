@@ -568,7 +568,7 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  // --- SUB-COLUNA ESQUERDA: BLOCO GPU DEDICADO ---
+  // --- SUB-COLUNA ESQUERDA: BLOCO GPU DEDICADO (PADRÃO ARMAZENAMENTO) ---
   Widget _buildGpuBlock(SystemStatsModel stats, SystemSpecsModel? specs) {
     final gpuName = (stats.gpu.isNotEmpty && stats.gpu.first.model.isNotEmpty)
         ? stats.gpu.first.model
@@ -581,30 +581,51 @@ class HomeScreen extends StatelessWidget {
     final vramUsed = stats.gpu.isNotEmpty ? stats.gpu.first.memoryUsed : null;
     final gpuTemp = stats.gpu.isNotEmpty ? stats.gpu.first.temperatureGpu : null;
 
+    double? vramPercent;
+    if (vramUsed != null && vramTotal != null && vramTotal > 0) {
+      vramPercent = ((vramUsed / vramTotal) * 100.0).clamp(0.0, 100.0);
+    }
+
+    final barColor = AppTheme.getLoadColor(vramPercent ?? 0.0);
+
     return Container(
       padding: const EdgeInsets.all(6),
       decoration: BoxDecoration(
         color: AppTheme.surface,
-        borderRadius: BorderRadius.circular(5),
+        borderRadius: BorderRadius.circular(6),
         border: Border.all(color: AppTheme.border, width: 0.8),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
-          // Linha de Título GPU
-          const Row(
+          // Header GPU com Ícone e Temperatura à direita
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Icon(Icons.videogame_asset_outlined, color: AppTheme.accentPurple, size: 16),
-              SizedBox(width: 4),
-              Text(
-                'GPU',
-                style: TextStyle(color: AppTheme.accentPurple, fontSize: 13.0, fontWeight: FontWeight.bold),
+              const Row(
+                children: [
+                  Icon(Icons.videogame_asset_outlined, color: AppTheme.accentPurple, size: 16),
+                  SizedBox(width: 4),
+                  Text(
+                    'GPU',
+                    style: TextStyle(color: AppTheme.accentPurple, fontSize: 13.0, fontWeight: FontWeight.bold),
+                  ),
+                ],
               ),
+              if (gpuTemp != null && gpuTemp > 0)
+                Text(
+                  '${gpuTemp.toStringAsFixed(0)}°C',
+                  style: TextStyle(
+                    color: gpuTemp > 75 ? AppTheme.accentRed : (gpuTemp > 60 ? AppTheme.accentYellow : AppTheme.textSecondary),
+                    fontSize: 12.0,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
             ],
           ),
 
-          // Nome da GPU em destaque
+          // Nome do Modelo da GPU
           Text(
             gpuName,
             style: const TextStyle(color: AppTheme.textPrimary, fontSize: 12.0, fontWeight: FontWeight.bold),
@@ -612,32 +633,41 @@ class HomeScreen extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
           ),
 
-          // VRAM e Temperatura
+          // Linha VRAM no padrão exato do Armazenamento (Label à esquerda, % e GBs à direita)
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              if (vramTotal != null && vramTotal > 0)
+              const Text(
+                'VRAM',
+                style: TextStyle(color: AppTheme.textSecondary, fontSize: 11.5, fontWeight: FontWeight.w600),
+              ),
+              if (vramPercent != null && vramUsed != null && vramTotal != null)
                 Text(
-                  vramUsed != null
-                      ? '${(vramUsed / 1024.0).toStringAsFixed(1)}G / ${(vramTotal / 1024.0).toStringAsFixed(0)}G VRAM'
-                      : '${(vramTotal / 1024.0).toStringAsFixed(0)}G VRAM',
+                  '${vramPercent.toStringAsFixed(0)}% (${(vramUsed / 1024.0).toStringAsFixed(1)}G / ${(vramTotal / 1024.0).toStringAsFixed(0)}G)',
+                  style: TextStyle(color: barColor, fontSize: 11.5, fontWeight: FontWeight.bold),
+                )
+              else if (vramTotal != null && vramTotal > 0)
+                Text(
+                  '${(vramTotal / 1024.0).toStringAsFixed(0)} GB',
                   style: const TextStyle(color: AppTheme.accentPurple, fontSize: 11.5, fontWeight: FontWeight.bold),
                 )
               else
                 const Text(
-                  'VRAM Dinâmica',
+                  'Dinâmica',
                   style: TextStyle(color: AppTheme.textSecondary, fontSize: 11.0),
                 ),
-              if (gpuTemp != null && gpuTemp > 0)
-                Text(
-                  '${gpuTemp.toStringAsFixed(0)}°C',
-                  style: TextStyle(
-                    color: gpuTemp > 75 ? AppTheme.accentRed : AppTheme.accentYellow,
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
             ],
+          ),
+
+          // Barra de Progresso VRAM (Idêntica à dos Discos / Armazenamento)
+          ClipRRect(
+            borderRadius: BorderRadius.circular(2.5),
+            child: LinearProgressIndicator(
+              value: vramPercent != null ? (vramPercent / 100.0).clamp(0.0, 1.0) : 0.0,
+              backgroundColor: AppTheme.surfaceVariant,
+              valueColor: AlwaysStoppedAnimation<Color>(barColor),
+              minHeight: 4.5,
+            ),
           ),
         ],
       ),
