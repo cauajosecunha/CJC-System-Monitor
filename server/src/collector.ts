@@ -1,4 +1,4 @@
-import { exec } from "node:child_process";
+import { spawn, ChildProcess } from "node:child_process";
 import os from "node:os";
 import si from "systeminformation";
 import {
@@ -20,35 +20,78 @@ let lastDiskPoll = 0;
 let cachedGfx: GpuStats[] = [];
 let lastGfxPoll = 0;
 let cachedWindowsVramUsedMb: number | null = null;
-let isPollingWindowsVram = false;
+let typeperfProcess: ChildProcess | null = null;
 
-function pollWindowsVram(): void {
-  if (process.platform !== "win32" || isPollingWindowsVram) return;
-  isPollingWindowsVram = true;
-  exec('typeperf "\\GPU Local Adapter Memory(*)\\Local Usage" -sc 1', { timeout: 3500 }, (err, stdout) => {
-    isPollingWindowsVram = false;
-    if (err || !stdout) return;
+function startWindowsVramMonitor(): void {
+  if (process.platform !== "win32") return;
+  if (typeperfProcess) {
     try {
-      const lines = stdout.trim().split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0);
-      if (lines.length >= 2) {
-        const values = lines[1]
+      typeperfProcess.kill();
+    } catch (_) {}
+    typeperfProcess = null;
+  }
+
+  let lineBuffer = "";
+  try {
+    const child = spawn(
+      "typeperf.exe",
+      ["\\GPU Local Adapter Memory(*)\\Local Usage", "-si", "3"],
+      {
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "ignore"],
+      }
+    );
+
+    typeperfProcess = child;
+
+    child.stdout?.on("data", (chunk: Buffer) => {
+      lineBuffer += chunk.toString();
+      const lines = lineBuffer.split(/\r?\n/);
+      lineBuffer = lines.pop() || "";
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('"(PDH-CSV')) continue;
+        const parts = trimmed
           .split(",")
           .slice(1)
           .map((v) => parseFloat(v.replace(/"/g, "")))
           .filter((v) => !isNaN(v));
-        if (values.length > 0) {
-          const maxUsedBytes = Math.max(...values);
-          cachedWindowsVramUsedMb = Math.round(maxUsedBytes / (1024 * 1024));
+        if (parts.length > 0) {
+          const maxBytes = Math.max(...parts);
+          cachedWindowsVramUsedMb = Math.round(maxBytes / (1024 * 1024));
         }
       }
-    } catch (_) {}
-  });
+    });
+
+    child.on("error", () => {
+      typeperfProcess = null;
+      setTimeout(startWindowsVramMonitor, 10000);
+    });
+
+    child.on("exit", () => {
+      typeperfProcess = null;
+      setTimeout(startWindowsVramMonitor, 5000);
+    });
+  } catch (_) {
+    typeperfProcess = null;
+  }
 }
 
-// Inicia polling assíncrono em segundo plano para o Windows (não bloqueia o loop principal)
+// Inicia monitoramento contínuo invisível em segundo plano (processo persistente único, sem piscar janelas)
 if (process.platform === "win32") {
-  pollWindowsVram();
-  setInterval(pollWindowsVram, 4000);
+  startWindowsVramMonitor();
+
+  const cleanup = () => {
+    if (typeperfProcess) {
+      try {
+        typeperfProcess.kill();
+      } catch (_) {}
+      typeperfProcess = null;
+    }
+  };
+  process.on("exit", cleanup);
+  process.on("SIGINT", cleanup);
+  process.on("SIGTERM", cleanup);
 }
 
 export async function getSystemSpecs(): Promise<SystemSpecsPayload> {
