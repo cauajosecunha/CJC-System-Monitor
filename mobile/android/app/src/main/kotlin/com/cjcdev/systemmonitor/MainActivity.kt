@@ -93,14 +93,9 @@ class MainActivity : FlutterActivity(), SensorEventListener {
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
     override fun setRequestedOrientation(requestedOrientation: Int) {
-        // Impede que o Flutter bloqueie a orientação com USER_LANDSCAPE (11)
+        // Permite rotação bidirecional livre em modo horizontal
         if (requestedOrientation == 11) {
-            val target = if (isReverseLandscape) {
-                ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
-            } else {
-                ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-            }
-            super.setRequestedOrientation(target)
+            super.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE)
         } else {
             super.setRequestedOrientation(requestedOrientation)
         }
@@ -114,13 +109,12 @@ class MainActivity : FlutterActivity(), SensorEventListener {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Padrão inicial: Reverse Landscape (desvira os 180° imediatos)
-        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
+        // Padrão inicial no Galaxy A71: Sensor Landscape (orientação natural nos dois sentidos)
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         setupOrientationSensor()
 
         mainHandler.post { neutralizeMouseCursor() }
         mainHandler.postDelayed({ neutralizeMouseCursor() }, 300)
-        mainHandler.postDelayed({ neutralizeMouseCursor() }, 1000)
     }
 
     override fun onResume() {

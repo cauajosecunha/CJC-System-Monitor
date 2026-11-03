@@ -17,15 +17,19 @@ class HomeScreen extends StatelessWidget {
     return Scaffold(
       backgroundColor: AppTheme.background,
       body: SafeArea(
+        left: true,
+        right: true,
+        top: false,
+        bottom: false,
         child: Consumer<MonitorProvider>(
           builder: (context, provider, child) {
             return Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4.0, vertical: 2.0),
+              padding: const EdgeInsets.symmetric(horizontal: 6.0, vertical: 3.0),
               child: Column(
                 children: [
-                  // 1. BARRA HUD SUPERIOR GLOBAL (Altura ~28dp com fontes ampliadas)
+                  // 1. BARRA HUD SUPERIOR GLOBAL (Altura 32dp com excelente toque)
                   _buildGlobalHudBar(context, provider),
-                  const SizedBox(height: 3),
+                  const SizedBox(height: 4),
 
                   // 2. CORPO: AS DUAS TELAS EXIBIDAS JUNTAS LADO A LADO
                   Expanded(
@@ -41,14 +45,14 @@ class HomeScreen extends StatelessWidget {
                             isDevPc: true,
                           ),
                         ),
-                        const SizedBox(width: 3),
+                        const SizedBox(width: 4),
 
                         // DIVISOR VERTICAL NEON
                         Container(
                           width: 1.0,
                           color: AppTheme.border,
                         ),
-                        const SizedBox(width: 3),
+                        const SizedBox(width: 4),
 
                         // LADO DIREITO: SERVIDOR UBUNTU (UBUNTU SERVER 24.04 LTS)
                         Expanded(
@@ -71,30 +75,30 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  // --- 1. BARRA HUD SUPERIOR GLOBAL (+40% AMPLIADA) ---
+  // --- 1. BARRA HUD SUPERIOR GLOBAL (OTIMIZADA GALAXY A71) ---
   Widget _buildGlobalHudBar(BuildContext context, MonitorProvider provider) {
     return Container(
-      height: 28,
-      padding: const EdgeInsets.symmetric(horizontal: 6),
+      height: 32,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
       decoration: BoxDecoration(
         color: AppTheme.surface,
-        borderRadius: BorderRadius.circular(5),
+        borderRadius: BorderRadius.circular(6),
         border: Border.all(color: AppTheme.border, width: 0.8),
       ),
       child: Row(
         children: [
-          const Icon(Icons.monitor_heart, color: AppTheme.primaryBlue, size: 16),
-          const SizedBox(width: 5),
+          const Icon(Icons.monitor_heart, color: AppTheme.primaryBlue, size: 18),
+          const SizedBox(width: 6),
           const Text(
             'CJC MONITOR',
             style: TextStyle(
               color: AppTheme.textPrimary,
-              fontSize: 12.0,
+              fontSize: 13.0,
               fontWeight: FontWeight.w900,
               letterSpacing: 0.8,
             ),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 12),
 
           // Status Resumido Meu-PC
           _buildQuickStatusBadge(
@@ -103,11 +107,11 @@ class HomeScreen extends StatelessWidget {
             server: provider.devPc,
             color: AppTheme.primaryBlue,
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 10),
 
           // Divisor
-          Container(width: 1, height: 14, color: AppTheme.border),
-          const SizedBox(width: 8),
+          Container(width: 1, height: 16, color: AppTheme.border),
+          const SizedBox(width: 10),
 
           // Status Resumido Ubuntu Server
           _buildQuickStatusBadge(
@@ -119,7 +123,7 @@ class HomeScreen extends StatelessWidget {
 
           const Spacer(),
 
-          // Botão Girar 180° (Inverter Orientação)
+          // Botão Girar 180° (Inverter Orientação Manual)
           InkWell(
             onTap: () async {
               const platform = MethodChannel('com.cjcdev.systemmonitor/orientation');
@@ -129,25 +133,25 @@ class HomeScreen extends StatelessWidget {
             },
             borderRadius: BorderRadius.circular(4),
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
                 color: AppTheme.surfaceVariant,
-                borderRadius: BorderRadius.circular(3),
+                borderRadius: BorderRadius.circular(4),
                 border: Border.all(color: AppTheme.border, width: 0.6),
               ),
               child: const Row(
                 children: [
                   Icon(Icons.screen_rotation, color: AppTheme.accentYellow, size: 14),
-                  SizedBox(width: 3),
+                  SizedBox(width: 4),
                   Text(
                     '180°',
-                    style: TextStyle(color: AppTheme.accentYellow, fontSize: 11.0, fontWeight: FontWeight.bold),
+                    style: TextStyle(color: AppTheme.accentYellow, fontSize: 11.5, fontWeight: FontWeight.bold),
                   ),
                 ],
               ),
             ),
           ),
-          const SizedBox(width: 5),
+          const SizedBox(width: 6),
 
           // Botão Configurações
           InkWell(
@@ -158,19 +162,19 @@ class HomeScreen extends StatelessWidget {
             },
             borderRadius: BorderRadius.circular(4),
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
                 color: AppTheme.surfaceVariant,
-                borderRadius: BorderRadius.circular(3),
+                borderRadius: BorderRadius.circular(4),
                 border: Border.all(color: AppTheme.border, width: 0.6),
               ),
               child: const Row(
                 children: [
                   Icon(Icons.settings, color: AppTheme.textSecondary, size: 14),
-                  SizedBox(width: 3),
+                  SizedBox(width: 4),
                   Text(
                     'CONFIG',
-                    style: TextStyle(color: AppTheme.textSecondary, fontSize: 11.0, fontWeight: FontWeight.bold),
+                    style: TextStyle(color: AppTheme.textSecondary, fontSize: 11.5, fontWeight: FontWeight.bold),
                   ),
                 ],
               ),
@@ -203,13 +207,13 @@ class HomeScreen extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(icon, size: 14, color: color),
+        Icon(icon, size: 15, color: color),
         const SizedBox(width: 4),
         Text(
           name,
-          style: const TextStyle(color: AppTheme.textPrimary, fontSize: 11.0, fontWeight: FontWeight.bold),
+          style: const TextStyle(color: AppTheme.textPrimary, fontSize: 11.5, fontWeight: FontWeight.bold),
         ),
-        const SizedBox(width: 4),
+        const SizedBox(width: 5),
         Container(
           width: 7,
           height: 7,
@@ -218,7 +222,7 @@ class HomeScreen extends StatelessWidget {
         const SizedBox(width: 3),
         Text(
           statusText,
-          style: TextStyle(color: dotColor, fontSize: 9.5, fontWeight: FontWeight.bold),
+          style: TextStyle(color: dotColor, fontSize: 10.0, fontWeight: FontWeight.bold),
         ),
       ],
     );
@@ -235,20 +239,20 @@ class HomeScreen extends StatelessWidget {
     final specs = server.specs;
 
     return Container(
-      padding: const EdgeInsets.all(4),
+      padding: const EdgeInsets.all(5),
       decoration: BoxDecoration(
         color: AppTheme.surface.withValues(alpha: 0.7),
-        borderRadius: BorderRadius.circular(6),
+        borderRadius: BorderRadius.circular(8),
         border: Border.all(
           color: isDevPc ? AppTheme.primaryBlue.withValues(alpha: 0.35) : AppTheme.accentGreen.withValues(alpha: 0.35),
-          width: 0.9,
+          width: 1.0,
         ),
       ),
       child: Column(
         children: [
           // Header da Máquina (Nome, IP, Uptime)
           _buildMachineHeader(server, isDevPc),
-          const SizedBox(height: 3),
+          const SizedBox(height: 4),
 
           // Conteúdo: se desconectado, mostra placeholder com botão de reconexão
           Expanded(
@@ -277,42 +281,42 @@ class HomeScreen extends StatelessWidget {
     }
 
     return Container(
-      height: 24,
-      padding: const EdgeInsets.symmetric(horizontal: 5),
+      height: 26,
+      padding: const EdgeInsets.symmetric(horizontal: 6),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.14),
-        borderRadius: BorderRadius.circular(4),
-        border: Border.all(color: color.withValues(alpha: 0.35), width: 0.6),
+        borderRadius: BorderRadius.circular(5),
+        border: Border.all(color: color.withValues(alpha: 0.35), width: 0.7),
       ),
       child: Row(
         children: [
-          Icon(icon, size: 14, color: color),
-          const SizedBox(width: 3),
+          Icon(icon, size: 15, color: color),
+          const SizedBox(width: 4),
           Text(
             label,
-            style: TextStyle(color: color, fontSize: 10.5, fontWeight: FontWeight.bold, letterSpacing: 0.3),
+            style: TextStyle(color: color, fontSize: 11.5, fontWeight: FontWeight.bold, letterSpacing: 0.3),
           ),
-          const SizedBox(width: 3),
+          const SizedBox(width: 4),
           Container(
             width: 6,
             height: 6,
             decoration: BoxDecoration(shape: BoxShape.circle, color: dotColor),
           ),
-          const SizedBox(width: 3),
+          const SizedBox(width: 4),
           Flexible(
             child: Text(
               server.host,
-              style: const TextStyle(color: AppTheme.textSecondary, fontSize: 9.5, fontFamily: 'monospace'),
+              style: const TextStyle(color: AppTheme.textSecondary, fontSize: 10.5, fontFamily: 'monospace'),
               overflow: TextOverflow.ellipsis,
             ),
           ),
           if (server.isConnected && server.currentStats != null) ...[
-            const SizedBox(width: 4),
-            const Icon(Icons.timer_outlined, size: 11, color: AppTheme.textSecondary),
+            const SizedBox(width: 6),
+            const Icon(Icons.timer_outlined, size: 12, color: AppTheme.textSecondary),
             const SizedBox(width: 2),
             Text(
               FormatUtils.formatUptime(server.currentStats!.uptime),
-              style: const TextStyle(color: AppTheme.textSecondary, fontSize: 9.5, fontWeight: FontWeight.w600),
+              style: const TextStyle(color: AppTheme.textSecondary, fontSize: 10.0, fontWeight: FontWeight.w600),
             ),
           ],
         ],
